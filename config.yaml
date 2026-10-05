@@ -28,8 +28,8 @@ ignav:
   timeout_seconds: 60
   max_retries: 3               # reintentos ante timeouts, 424, 429 y 5xx
   backoff_seconds: 2           # espera base; se duplica en cada reintento
-  # price.amount es el TOTAL de todos los pasajeros (verificado en el playground de Ignav):
-  # precio por persona = amount / adults.
+  # price.amount es el precio POR PERSONA (verificado en el playground de Ignav):
+  # total = amount * adults.
   price_is_total: false
   allow_self_transfer: true    # default de la API
 

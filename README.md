@@ -311,9 +311,9 @@ Según la documentación de Ignav:
 - **Sin calendario ni fechas flexibles:** cada request es un par de fechas.
 - **Open-jaw:** Ignav tiene `POST /api/fares/search` (1 o 2 tramos con distintos aeropuertos), pero su
   esquema todavía no fue verificado, así que el adaptador no lo usa (`supports_open_jaw = False`).
-- **Precio total:** `price.amount` es el total de todos los pasajeros (verificado en el
-  [playground](https://ignav.com/playground)), así que `ignav.price_is_total: true` y el precio por persona
-  es `amount / adults`.
+- **Precio por persona:** `price.amount` es el precio por persona (verificado en el
+  [playground](https://ignav.com/playground)), así que `ignav.price_is_total: false` y el total es
+  `amount × adults`.
 - **Moneda:** se pide `market: US`. Las tarifas que no vengan en `USD` se descartan y se loguean.
 - **Escalas:** se envía `max_stops: 1` y además se filtra localmente por la cantidad de segmentos de cada
   tramo.
