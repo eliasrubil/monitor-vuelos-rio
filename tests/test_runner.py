@@ -1,0 +1,269 @@
+import datetime as dt
+import sqlite3
+from collections import defaultdict
+
+import pytest
+
+from monitor.alerts.channels import LogNotifier, Notifier
+from monitor.planner import plan_run
+from monitor.runner import Runner
+from monitor.storage import Store
+
+from .conftest import FakeChannel, FakeSource, constant_prices, make_config
+
+
+def run_once(cfg, source, notifier, clock, full_scan=False, dry_run=False):
+    store = Store.open(cfg.database.path, dry_run=dry_run)
+    try:
+        return Runner(cfg, store, source, notifier, dry_run=dry_run, clock=clock).run(full_scan=full_scan)
+    finally:
+        store.close()
+
+
+def db(cfg):
+    conn = sqlite3.connect(cfg.database.path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def test_first_run_is_full_scan(cfg, notifier, channels, clock):
+    src = FakeSource(constant_prices())
+    assert run_once(cfg, src, notifier, clock) == 0
+    assert len(src.calls) == 39 * 3 * 2
+    conn = db(cfg)
+    run = conn.execute("SELECT * FROM runs").fetchone()
+    assert run["mode"] == "full" and run["status"] == "ok"
+    assert run["executed_queries"] == 234 and run["saved_queries"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 234
+    assert conn.execute("SELECT COUNT(*) FROM requests WHERE billable = 1").fetchone()[0] == 234
+    obs = conn.execute("SELECT * FROM observations LIMIT 1").fetchone()
+    assert obs["price_total"] == obs["price_pp"] * 5
+    assert obs["duration_days"] == 9 and obs["currency"] == "USD" and obs["airlines"] == "AR,G3"
+    # resumen por email, nada por Telegram (no hay historial suficiente para alertar)
+    assert len(channels["email"].sent) == 1
+    assert "Top 5" in channels["email"].sent[0][1]
+
+
+def test_incremental_run_selects_top_rotating_and_skips_reduced_gru(cfg, notifier, clock):
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)
+    clock.advance()
+    src = FakeSource(constant_prices())
+    run_once(cfg, src, notifier, clock)
+    per_dest = defaultdict(set)
+    for q in src.calls:
+        per_dest[q.destination].add((q.depart, q.ret))
+    # GRU en modo reducido (su mediana no es <= GIG - 80) y consultado hace 1 día -> salteado
+    assert set(per_dest) == {"GIG", "CFB"}
+    assert len(per_dest["GIG"]) == 8 + 5
+    assert len(src.calls) == 2 * 13 * 2
+    run = db(cfg).execute("SELECT * FROM runs ORDER BY id DESC").fetchone()
+    assert run["mode"] == "incremental"
+    assert run["saved_queries"] == 234 - 52
+
+
+def test_top_k_are_the_cheapest_pairs(cfg, notifier, clock):
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)
+    store = Store.open(cfg.database.path)
+    clock.advance()
+    plan = plan_run(cfg, store, cfg.search.origins, clock.now)
+    gig = next(d for d in plan.destinations if d.destination == "GIG")
+    top = sorted({(q.depart, q.ret) for q in gig.queries if q.reason == "top"})
+    window = sorted(store.window("GIG"), key=lambda p: p.price_pp)[:8]
+    assert top == sorted((p.depart, p.ret) for p in window)
+    store.close()
+
+
+def test_staleness_guarantee(cfg, notifier, clock):
+    """Ningún par de GIG/CFB queda más de max_staleness_runs corridas sin actualizar."""
+    last_seen: dict = {}
+    max_gap = 0
+    for run in range(1, 25):
+        src = FakeSource(constant_prices())
+        run_once(cfg, src, notifier, clock)
+        for q in src.calls:
+            if q.destination != "GIG" or q.origin != "EZE":
+                continue
+            key = (q.depart, q.ret)
+            if key in last_seen:
+                max_gap = max(max_gap, run - last_seen[key])
+            last_seen[key] = run
+        stale_now = [k for k, v in last_seen.items() if run - v >= cfg.optimization.max_staleness_runs]
+        assert not stale_now, f"corrida {run}: pares sin actualizar {stale_now}"
+        clock.advance()
+    assert len(last_seen) == 39
+    assert max_gap <= cfg.optimization.max_staleness_runs
+
+
+def test_no_service_after_two_empty_runs_and_recheck(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")},
+                      search={"destinations": ["GIG"]}, optimization={"top_k": 39, "rotating_k": 0})
+    dead = (dt.date(2027, 1, 14), dt.date(2027, 1, 23))
+    base = constant_prices()
+
+    def prices(q):
+        return None if (q.origin, q.depart, q.ret) == ("AEP", *dead) else base(q)
+
+    run_once(cfg, FakeSource(prices), notifier, clock)            # vacío 1
+    clock.advance()
+    src = FakeSource(prices)
+    run_once(cfg, src, notifier, clock)                          # vacío 2 -> no_service
+    assert ("AEP", *dead) in {(q.origin, q.depart, q.ret) for q in src.calls}
+    row = db(cfg).execute("SELECT * FROM pair_state WHERE origin='AEP' AND depart_date='2027-01-14' "
+                          "AND return_date='2027-01-23'").fetchone()
+    assert row["no_service"] == 1 and row["empty_streak"] == 2
+
+    for _ in range(13):
+        clock.advance()
+        src = FakeSource(prices)
+        run_once(cfg, src, notifier, clock)
+        assert ("AEP", *dead) not in {(q.origin, q.depart, q.ret) for q in src.calls}
+        assert ("EZE", *dead) in {(q.origin, q.depart, q.ret) for q in src.calls}
+    clock.advance()   # 14 días desde la última consulta
+    store = Store.open(cfg.database.path)
+    plan = plan_run(cfg, store, cfg.search.origins, clock.now)
+    store.close()
+    rechecks = [q for q in plan.queries if q.reason == "recheck"]
+    assert [(q.origin, q.depart, q.ret) for q in rechecks] == [("AEP", *dead)]
+
+
+def test_gru_reduced_cadence_and_promotion(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")})
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)   # GRU 600 vs GIG 400: reducido
+    gru_runs = []
+    for day in range(1, 15):
+        clock.advance()
+        src = FakeSource(constant_prices())
+        run_once(cfg, src, notifier, clock)
+        if any(q.destination == "GRU" for q in src.calls):
+            gru_runs.append(day)
+    assert gru_runs == [7, 14]
+
+    # Si GRU se vuelve >= 80 USD más barato que GIG, pasa a seguimiento normal.
+    cheap_gru = constant_prices({"GIG": 400.0, "CFB": 450.0, "GRU": 250.0})
+    clock.advance(7)
+    run_once(cfg, FakeSource(cheap_gru), notifier, clock, full_scan=True)
+    clock.advance()
+    src = FakeSource(cheap_gru)
+    run_once(cfg, src, notifier, clock)
+    assert any(q.destination == "GRU" for q in src.calls)
+    assert db(cfg).execute("SELECT mode FROM dest_state WHERE destination='GRU'").fetchone()[0] == "normal"
+
+
+def test_budget_exceeded_skips_run_and_notifies(raw_config, tmp_path, notifier, channels, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, budget={"max_requests_per_month": 100})
+    src = FakeSource(constant_prices())
+    assert run_once(cfg, src, notifier, clock) == 0
+    assert src.calls == []
+    assert "presupuesto" in channels["telegram"].sent[0][0]
+    assert "presupuesto" in channels["email"].sent[0][0]
+    assert db(cfg).execute("SELECT status FROM runs").fetchone()[0] == "skipped_budget"
+
+
+def test_dry_run_does_not_touch_db_or_send(cfg, channels, clock):
+    run_once(cfg, FakeSource(constant_prices()), Notifier([channels["email"]]), clock)
+    before = open(cfg.database.path, "rb").read()
+    clock.advance()
+    src = FakeSource(constant_prices())
+    assert run_once(cfg, src, LogNotifier(), clock, dry_run=True) == 0
+    assert src.calls   # sí consulta
+    assert open(cfg.database.path, "rb").read() == before
+
+
+def test_dry_run_without_db_does_not_create_it(cfg, clock):
+    run_once(cfg, FakeSource(constant_prices()), LogNotifier(), clock, dry_run=True)
+    import os
+    assert not os.path.exists(cfg.database.path)
+
+
+@pytest.fixture
+def big_cfg(raw_config, tmp_path):
+    """Varios barridos completos superan el tope mensual real; para estos tests se sube."""
+    return make_config(raw_config, database={"path": str(tmp_path / "p.db")},
+                       budget={"max_requests_per_month": 100_000})
+
+
+def _build_history(cfg, notifier, clock, runs=8):
+    for _ in range(runs):
+        run_once(cfg, FakeSource(constant_prices()), notifier, clock, full_scan=True)
+        clock.advance()
+
+
+def drop_for(pair, price):
+    base = constant_prices()
+
+    def fn(q):
+        if q.destination == "GIG" and (q.depart, q.ret) == pair:
+            return price
+        return base(q)
+
+    return fn
+
+
+def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)
+    pair = (dt.date(2027, 1, 20), dt.date(2027, 1, 30))   # precio normal ~428
+    channels["telegram"].sent.clear()
+    channels["email"].sent.clear()
+
+    src = FakeSource(drop_for(pair, 300))
+    run_once(cfg, src, notifier, clock, full_scan=True)
+    assert len(channels["telegram"].sent) == 1
+    subject, text = channels["telegram"].sent[0]
+    assert "GIG" in subject and "300" in subject
+    assert "A (vs. historial del itinerario)" in text and "B (vs. ventana del destino)" in text
+    assert "USD 1.500 total" in text and "10 días" in text
+    assert "https://example.com/book/" in text
+    assert len(src.link_calls) == 1               # link solo para el alertado
+    # email: una alerta + resumen
+    assert len(channels["email"].sent) == 2
+
+    clock.advance()
+    channels["telegram"].sent.clear()
+    run_once(cfg, FakeSource(drop_for(pair, 295)), notifier, clock, full_scan=True)   # baja < 3%
+    assert channels["telegram"].sent == []
+
+    clock.advance()
+    run_once(cfg, FakeSource(drop_for(pair, 290)), notifier, clock, full_scan=True)   # 290 <= 300*0.97
+    assert len(channels["telegram"].sent) == 1
+
+    alerts = db(cfg).execute("SELECT * FROM alerts ORDER BY id").fetchall()
+    assert [a["price_pp"] for a in alerts] == [300, 290]
+    assert alerts[0]["rules"] == "A,B" and alerts[0]["channels"] == "telegram,email"
+
+
+def test_failed_channel_does_not_block_the_other(big_cfg, clock):
+    cfg = big_cfg
+    tg, mail = FakeChannel("telegram", fail=True), FakeChannel("email")
+    notifier = Notifier([tg, mail])
+    _build_history(cfg, notifier, clock)
+    pair = (dt.date(2027, 1, 20), dt.date(2027, 1, 30))
+    run_once(cfg, FakeSource(drop_for(pair, 300)), notifier, clock, full_scan=True)
+    alert = db(cfg).execute("SELECT channels FROM alerts").fetchone()
+    assert alert["channels"] == "email"
+
+
+def test_errors_do_not_stop_the_run(cfg, notifier, clock):
+    base = constant_prices()
+    src = FakeSource(lambda q: "error" if q.destination == "CFB" else base(q))
+    assert run_once(cfg, src, notifier, clock) == 0
+    assert len(src.calls) == 234
+    conn = db(cfg)
+    assert conn.execute("SELECT status FROM runs").fetchone()[0] == "partial"
+    assert conn.execute("SELECT COUNT(*) FROM requests WHERE status='error'").fetchone()[0] == 78
+    # los pares con error no se marcan como consultados: van primero en la próxima rotación
+    assert conn.execute("SELECT COUNT(*) FROM pair_state WHERE destination='CFB'").fetchone()[0] == 0
+
+
+def test_fatal_error_stops_and_alerts(cfg, notifier, channels, clock):
+    src = FakeSource(lambda q: "fatal")
+    assert run_once(cfg, src, notifier, clock) == 1
+    assert len(src.calls) == 1
+    assert any("error de la fuente" in s for s, _ in channels["telegram"].sent)
+
+
+def test_stop_after(cfg, notifier, clock):
+    clock.now = dt.datetime(2027, 1, 11, 11, tzinfo=dt.timezone.utc)
+    src = FakeSource(constant_prices())
+    assert run_once(cfg, src, notifier, clock) == 0
+    assert src.calls == []

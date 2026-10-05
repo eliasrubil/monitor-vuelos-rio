@@ -1,0 +1,10 @@
+[project]
+name = "monitor-vuelos-rio"
+version = "0.1.0"
+description = "Monitor determinístico de precios de vuelos Buenos Aires -> Brasil"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

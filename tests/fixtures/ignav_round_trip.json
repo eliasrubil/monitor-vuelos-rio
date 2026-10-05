@@ -1,0 +1,48 @@
+{
+  "origin": "EZE",
+  "destination": "GIG",
+  "departure_date": "2027-01-15",
+  "return_date": "2027-01-25",
+  "itineraries": [
+    {
+      "ignav_id": "aaa111",
+      "price": {"amount": 2450, "currency": "USD", "status": "verified"},
+      "cabin_class": "economy",
+      "requires_self_transfer": false,
+      "outbound": {"segments": [
+        {"marketing_carrier_code": "G3", "flight_number": "7461", "departure_time_local": "2027-01-15T08:10:00", "duration_minutes": 180}
+      ]},
+      "inbound": {"segments": [
+        {"marketing_carrier_code": "G3", "flight_number": "7460", "departure_time_local": "2027-01-25T14:30:00", "duration_minutes": 185}
+      ]}
+    },
+    {
+      "ignav_id": "bbb222",
+      "price": {"amount": 2100, "currency": "USD", "status": "verified"},
+      "cabin_class": "economy",
+      "requires_self_transfer": false,
+      "outbound": {"segments": [
+        {"marketing_carrier_code": "AR", "flight_number": "1250", "departure_time_local": "2027-01-15T06:00:00", "duration_minutes": 160},
+        {"marketing_carrier_code": "G3", "flight_number": "1001", "departure_time_local": "2027-01-15T11:00:00", "duration_minutes": 60}
+      ]},
+      "inbound": {"segments": [
+        {"marketing_carrier_code": "G3", "flight_number": "1002", "departure_time_local": "2027-01-25T09:00:00", "duration_minutes": 60},
+        {"marketing_carrier_code": "AR", "flight_number": "1251", "departure_time_local": "2027-01-25T13:00:00", "duration_minutes": 170}
+      ]}
+    },
+    {
+      "ignav_id": "ccc333",
+      "price": {"amount": 1500, "currency": "USD", "status": "verified"},
+      "cabin_class": "economy",
+      "requires_self_transfer": true,
+      "outbound": {"segments": [
+        {"marketing_carrier_code": "JA", "flight_number": "100", "duration_minutes": 100},
+        {"marketing_carrier_code": "LA", "flight_number": "200", "duration_minutes": 100},
+        {"marketing_carrier_code": "LA", "flight_number": "300", "duration_minutes": 100}
+      ]},
+      "inbound": {"segments": [
+        {"marketing_carrier_code": "LA", "flight_number": "301", "duration_minutes": 100}
+      ]}
+    }
+  ]
+}

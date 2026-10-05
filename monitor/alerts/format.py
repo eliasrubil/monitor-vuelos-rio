@@ -1,0 +1,184 @@
+"""Textos de alertas y resúmenes (texto plano, sirve para Telegram y email)."""
+
+from __future__ import annotations
+
+import datetime as dt
+from dataclasses import dataclass
+from typing import Optional
+
+from ..config import Config
+from ..detection import RULE_NAMES, Evaluation
+
+WEEKDAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+
+
+@dataclass
+class Candidate:
+    """Mejor tarifa de un itinerario (destino + fechas) en la corrida actual."""
+
+    origin: str
+    destination: str
+    depart: dt.date
+    ret: dt.date
+    stops: int
+    airlines: str
+    price_pp: float
+    price_total: float
+    currency: str
+    observation_id: int
+    source_ref: Optional[str] = None
+    booking_url: Optional[str] = None
+    self_transfer: bool = False
+
+    @property
+    def duration(self) -> int:
+        return (self.ret - self.depart).days
+
+
+def money(amount: float, currency: str = "USD") -> str:
+    return f"{currency} {amount:,.0f}".replace(",", ".")
+
+
+def pct(value: float) -> str:
+    return f"{value * 100:.1f}%".replace(".", ",")
+
+
+def fdate(d: dt.date) -> str:
+    return f"{WEEKDAYS[d.weekday()]} {d:%d/%m/%Y}"
+
+
+def _vs_line(label: str, below: Optional[float], extra: str) -> str:
+    if below is None:
+        return f"{label}: sin datos ({extra})"
+    direction = "debajo" if below >= 0 else "arriba"
+    return f"{label}: {pct(abs(below))} {direction} de la media ({extra})"
+
+
+def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
+    subject = (
+        f"✈️ Precio bajo {c.origin}→{c.destination} {c.depart:%d/%m}–{c.ret:%d/%m}: "
+        f"{money(c.price_pp, c.currency)} por persona"
+    )
+    its = ev.itinerary_stats
+    itin_extra = f"{its.n} obs., media {money(its.mean, c.currency)}" if its else "0 obs."
+    win = ev.window_stats
+    if win:
+        age = ev.window_age_days
+        age_txt = f"datos de {age[0]} a {age[1]} días de antigüedad" if age else ""
+        rank_txt = f"puesto {ev.window_rank} de {win.n}, " if ev.window_rank else f"{win.n} pares, "
+        win_extra = f"{rank_txt}media {money(win.mean, c.currency)}, {age_txt}"
+    else:
+        win_extra = "0 pares"
+    lines = [
+        f"Destino: {cfg.airport(c.destination)}",
+        f"Origen: {cfg.airport(c.origin)}",
+        f"Fechas: {fdate(c.depart)} → {fdate(c.ret)} ({c.duration} días)",
+        f"Escalas: {c.stops} (máximo por tramo) · Aerolíneas: {c.airlines or 's/d'}",
+        f"Precio: {money(c.price_pp, c.currency)} por persona · {money(c.price_total, c.currency)} total "
+        f"({cfg.search.adults} adultos, con impuestos)",
+        _vs_line("Vs. itinerario", ev.pct_below_itinerary, itin_extra),
+        _vs_line(f"Vs. ventana {c.destination}", ev.pct_below_window, win_extra),
+        "Regla: " + " + ".join(RULE_NAMES[r] for r in ev.rules),
+        f"Reserva: {c.booking_url}" if c.booking_url else "Reserva: sin link disponible",
+    ]
+    if ev.robust_z is not None:
+        lines.insert(6, f"z robusto del itinerario: {ev.robust_z:.2f}")
+    if c.self_transfer:
+        lines.append("⚠️ Requiere self-transfer (tramos en tickets separados).")
+    return subject, "\n".join(lines)
+
+
+def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str]:
+    if len(messages) == 1:
+        return messages[0]
+    subject = f"✈️ {len(messages)} precios bajos detectados"
+    body = "\n\n".join(f"{s}\n{'-' * min(len(s), 60)}\n{t}" for s, t in messages)
+    return subject, body
+
+
+@dataclass
+class DestinationSummary:
+    destination: str
+    mode: str
+    n: int
+    mean: Optional[float]
+    median: Optional[float]
+
+
+@dataclass
+class TopItem:
+    destination: str
+    origin: str
+    depart: dt.date
+    ret: dt.date
+    price_pp: float
+    age_days: int
+
+
+def summary_message(
+    cfg: Config,
+    now: dt.datetime,
+    mode: str,
+    executed: int,
+    saved: int,
+    month_total: int,
+    alerts_sent: int,
+    top: list[TopItem],
+    destinations: list[DestinationSummary],
+    notes: list[str],
+) -> tuple[str, str]:
+    subject = f"Resumen vuelos {now:%d/%m/%Y}: " + (
+        f"mejor {top[0].destination} {money(top[0].price_pp, cfg.search.currency)} pp" if top else "sin precios"
+    )
+    lines = [
+        f"Corrida {now:%Y-%m-%d %H:%M} UTC ({mode})",
+        f"Consultas: {executed} hechas, {saved} ahorradas · acumulado del mes: {month_total}"
+        f"/{cfg.budget.max_requests_per_month}",
+        f"Alertas enviadas: {alerts_sent}",
+        "",
+        f"Top {cfg.alerts.summary_top_n} itinerarios más baratos (último precio conocido, por persona):",
+    ]
+    adults = cfg.search.adults
+    for i, t in enumerate(top, 1):
+        lines.append(
+            f"{i}. {t.destination} {fdate(t.depart)} → {fdate(t.ret)} ({(t.ret - t.depart).days} d) · "
+            f"{money(t.price_pp, cfg.search.currency)} pp · {money(t.price_pp * adults, cfg.search.currency)} total · "
+            f"desde {t.origin} · dato de hace {t.age_days} d"
+        )
+    if not top:
+        lines.append("(sin datos todavía)")
+    lines += ["", "Media por persona por destino:"]
+    for d in destinations:
+        mode_txt = " · modo reducido" if d.mode == "reduced" else ""
+        if d.mean is None:
+            lines.append(f"- {cfg.airport(d.destination)}: sin datos{mode_txt}")
+        else:
+            lines.append(
+                f"- {cfg.airport(d.destination)}: media {money(d.mean, cfg.search.currency)}, "
+                f"mediana {money(d.median, cfg.search.currency)} ({d.n} pares){mode_txt}"
+            )
+    if notes:
+        lines += ["", "Notas:"] + [f"- {n}" for n in notes]
+    return subject, "\n".join(lines)
+
+
+def budget_skip_message(cfg: Config, now: dt.datetime, used: int, estimated: int) -> tuple[str, str]:
+    limit = cfg.budget.max_requests_per_month
+    subject = "⚠️ Monitor de vuelos: corrida salteada por presupuesto"
+    text = (
+        f"La corrida del {now:%Y-%m-%d %H:%M} UTC necesitaba ~{estimated} requests y el acumulado del mes es "
+        f"{used}. Con el tope de {limit} (max_requests_per_month) se superaría el límite, así que no se consultó "
+        f"nada. Subí budget.max_requests_per_month en config.yaml o bajá top_k/rotating_k si querés seguir."
+    )
+    return subject, text
+
+
+def error_message(now: dt.datetime, detail: str, title: str = "error de la fuente") -> tuple[str, str]:
+    return f"⚠️ Monitor de vuelos: {title}", f"Corrida {now:%Y-%m-%d %H:%M} UTC.\n{detail}"
+
+
+def test_message(now: dt.datetime) -> tuple[str, str]:
+    return (
+        "✅ Monitor de vuelos: mensaje de prueba",
+        f"Si recibís esto, el canal está bien configurado ({now:%Y-%m-%d %H:%M} UTC).",
+    )
