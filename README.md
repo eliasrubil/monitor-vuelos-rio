@@ -178,9 +178,10 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
 
 - **test_alert:** manda un mensaje de prueba por Telegram y email y termina. Hacelo primero para verificar
   los secrets.
-- **dry_run:** consulta la API y calcula todo, pero **no escribe la base ni envía alertas** (los mensajes
-  aparecen en el log). Ojo: las requests de un dry run **se facturan igual** y no quedan en el contador
-  mensual.
+- **dry_run:** hace como máximo `budget.dry_run_max_queries` (4) consultas reales, calcula todo y muestra
+  los mensajes en el log, pero **no guarda precios ni envía alertas**. Como Ignav cobra esas requests,
+  **se suman al contador de uso del mes**: el workflow registra la corrida (`runs.mode = 'dry_run'`) y las
+  requests en la base, y la commitea.
 - **full_scan:** barrido completo de todas las combinaciones (234 requests).
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
@@ -202,7 +203,7 @@ export IGNAV_API_KEY=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
 export GMAIL_ADDRESS=... GMAIL_APP_PASSWORD=... ALERT_EMAIL_TO=...
 
 python -m monitor --test-alert       # mensaje de prueba por ambos canales
-python -m monitor --dry-run -v       # consulta y calcula, sin escribir ni alertar
+python -m monitor --dry-run -v       # hasta 4 consultas; no guarda precios ni alerta (sí cuenta el uso)
 python -m monitor                    # corrida normal
 python -m monitor --full-scan        # barrido completo
 python -m monitor --config otra.yaml # otra configuración
@@ -248,9 +249,10 @@ base, detección, alertas) no cambia.
 ## Presupuesto de requests y costo
 
 Al iniciar, cada corrida loguea los requests estimados y el acumulado del mes. Si la corrida haría superar
-`max_requests_per_month` (2000), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
+`max_requests_per_month` (2500), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
 cuántas consultas se hicieron, cuántas se ahorraron frente a un barrido completo y el acumulado del mes. El
-contador mensual cuenta solo las respuestas 200, que son las que Ignav factura.
+contador mensual cuenta solo las respuestas 200, que son las que Ignav factura, incluidas las de los
+dry runs.
 
 Con la configuración actual (medido con una simulación de 30 días):
 
@@ -260,7 +262,8 @@ Con la configuración actual (medido con una simulación de 30 días):
 | Día normal (GIG + CFB: 13 pares × 2 orígenes c/u) | 52 (54 si se fuerza un par viejo) |
 | Día en que toca GRU (cada 7 días) | 78 |
 | Links de reserva | 1 por alerta |
-| **Mes típico** | **~1.700** (el primer mes ~1.910 con el barrido) |
+| Dry run manual | hasta 4 |
+| **Mes típico** | **~1.700** (el primer mes ~1.910 con el barrido; margen de ~600 hasta el tope) |
 
 Costo: de octubre 2026 al 10/01/2027 son ~5.700 requests. Restando las 1.000 gratis, quedan
 **~USD 9–10 en total, ~USD 3,5 por mes**.
@@ -308,11 +311,9 @@ Según la documentación de Ignav:
 - **Sin calendario ni fechas flexibles:** cada request es un par de fechas.
 - **Open-jaw:** Ignav tiene `POST /api/fares/search` (1 o 2 tramos con distintos aeropuertos), pero su
   esquema todavía no fue verificado, así que el adaptador no lo usa (`supports_open_jaw = False`).
-- **Precio total vs. por persona:** `ignav.price_is_total: true` asume que `price.amount` es el total de
-  todos los pasajeros (precio por persona = amount / 5). **Verificalo** antes de confiar en los números: en
-  el [playground](https://ignav.com/playground), buscá la misma ruta y fechas con `adults: 1` y
-  `adults: 5`. Si el segundo es ~5 veces el primero, es total (`true`); si es casi igual, es por persona
-  (`false`).
+- **Precio total:** `price.amount` es el total de todos los pasajeros (verificado en el
+  [playground](https://ignav.com/playground)), así que `ignav.price_is_total: true` y el precio por persona
+  es `amount / adults`.
 - **Moneda:** se pide `market: US`. Las tarifas que no vengan en `USD` se descartan y se loguean.
 - **Escalas:** se envía `max_stops: 1` y además se filtra localmente por la cantidad de segmentos de cada
   tramo.

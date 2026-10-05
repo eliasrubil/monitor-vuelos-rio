@@ -13,7 +13,9 @@ def test_repo_config_loads():
     assert cfg.search.origins == ["EZE", "AEP"]
     assert cfg.search.destinations == ["GIG", "GRU", "CFB"]
     assert cfg.search.open_jaw is False
-    assert cfg.budget.max_requests_per_month == 2000
+    assert cfg.budget.max_requests_per_month == 2500
+    assert cfg.budget.dry_run_max_queries == 4
+    assert cfg.ignav.price_is_total is True
     assert cfg.detection.absolute_threshold_usd_pp is None
     assert cfg.schedule.stop_after == dt.date(2027, 1, 10)
 

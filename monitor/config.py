@@ -54,6 +54,7 @@ class IgnavConfig:
 @dataclass
 class BudgetConfig:
     max_requests_per_month: int = 1500
+    dry_run_max_queries: int = 4
 
 
 @dataclass
@@ -200,8 +201,8 @@ def _validate(cfg: Config) -> Config:
     o.reduced_reference_destination = o.reduced_reference_destination.upper()
     if o.top_k < 0 or o.rotating_k < 0 or o.max_staleness_runs < 1:
         raise ConfigError("optimization: top_k/rotating_k >= 0 y max_staleness_runs >= 1")
-    if cfg.budget.max_requests_per_month < 0:
-        raise ConfigError("budget.max_requests_per_month debe ser >= 0")
+    if cfg.budget.max_requests_per_month < 0 or cfg.budget.dry_run_max_queries < 0:
+        raise ConfigError("budget.max_requests_per_month y budget.dry_run_max_queries deben ser >= 0")
     return cfg
 
 

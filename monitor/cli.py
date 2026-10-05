@@ -51,9 +51,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     store = Store.open(cfg.database.path, dry_run=args.dry_run)
+    # En dry-run los precios van a una copia en memoria, pero las requests se registran en la base real.
+    usage = Store.open(cfg.database.path) if args.dry_run else None
     notifier = LogNotifier() if args.dry_run else build_notifier(cfg, secrets)
     try:
-        runner = Runner(cfg, store, make_source(cfg, secrets), notifier, dry_run=args.dry_run)
+        runner = Runner(cfg, store, make_source(cfg, secrets), notifier, dry_run=args.dry_run, usage=usage)
         return runner.run(full_scan=args.full_scan)
     except Exception as exc:  # noqa: BLE001 - avisar siempre ante un fallo inesperado
         log.exception("La corrida falló")
@@ -62,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         store.close()
+        if usage is not None:
+            usage.close()
 
 
 if __name__ == "__main__":

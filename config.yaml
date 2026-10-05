@@ -28,13 +28,14 @@ ignav:
   timeout_seconds: 60
   max_retries: 3               # reintentos ante timeouts, 424, 429 y 5xx
   backoff_seconds: 2           # espera base; se duplica en cada reintento
-  # true: price.amount es el total de todos los pasajeros (precio por persona = amount / adults).
-  # false: price.amount es por persona (total = amount * adults). Ver README "Verificar precio".
+  # price.amount es el TOTAL de todos los pasajeros (verificado en el playground de Ignav):
+  # precio por persona = amount / adults.
   price_is_total: true
   allow_self_transfer: true    # default de la API
 
 budget:
-  max_requests_per_month: 2000 # si la corrida lo superaría, se saltea y se avisa
+  max_requests_per_month: 2500 # si la corrida lo superaría, se saltea y se avisa
+  dry_run_max_queries: 4       # tope de consultas de un dry-run (se cobran y se suman al contador)
 
 optimization:
   top_k: 8                     # pares de fechas más baratos por destino que se consultan siempre

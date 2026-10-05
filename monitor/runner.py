@@ -6,7 +6,7 @@ import datetime as dt
 import logging
 import statistics
 from collections import Counter
-from typing import Callable
+from typing import Callable, Optional
 
 from .alerts.channels import Notifier
 from .alerts.format import (
@@ -41,10 +41,14 @@ class Runner:
         notifier: Notifier,
         *,
         dry_run: bool = False,
+        usage: Optional[Store] = None,
         clock: Callable[[], dt.datetime] = utcnow,
     ):
+        """usage: base donde se registran las requests (contador mensual). Por defecto es store; en
+        dry-run es la base real, porque la fuente cobra esas requests aunque no se guarden precios."""
         self.cfg = cfg
         self.store = store
+        self.usage = usage or store
         self.source = source
         self.notifier = notifier
         self.dry_run = dry_run
@@ -60,7 +64,8 @@ class Runner:
             log.info("Hoy (%s) es posterior a stop_after (%s): no se consulta nada.", now.date(), stop_after)
             return 0
         if self.dry_run:
-            log.info("Modo dry-run: se consulta la API pero no se escribe la base ni se envían alertas.")
+            log.info("Modo dry-run: se consulta la API (las requests se cuentan en el uso mensual), pero no se "
+                     "guardan precios ni se envían alertas.")
 
         origins = cfg.search.origins
         if self.source.supports_city_codes and cfg.search.city_code:
@@ -71,9 +76,14 @@ class Runner:
 
         plan = plan_run(cfg, self.store, origins, now, full_scan=full_scan)
         self._log_plan(plan)
+        if self.dry_run:
+            planned = len(plan.queries)
+            plan.limit_queries(cfg.budget.dry_run_max_queries)
+            log.info("dry-run: se limitan las consultas a %d de %d planificadas (budget.dry_run_max_queries)",
+                     len(plan.queries), planned)
 
         limit = cfg.budget.max_requests_per_month
-        used = self.store.month_requests(now)
+        used = self.usage.month_requests(now)
         estimated = len(plan.queries)
         log.info("Requests estimados para esta corrida: %d · acumulado del mes: %d · tope mensual: %d",
                  estimated, used, limit)
@@ -89,6 +99,10 @@ class Runner:
 
         mode = "full" if plan.is_full else "incremental"
         run_id = self.store.start_run(now, mode)
+        # En dry-run, la corrida se registra aparte en la base real solo para el contador de uso.
+        separate_usage = self.usage is not self.store
+        usage_run_id = self.usage.start_run(now, "dry_run") if separate_usage else run_id
+        self._usage_run_id = usage_run_id
         seqs = self._advance_destinations(plan, now)
 
         statuses: Counter[str] = Counter()
@@ -100,13 +114,14 @@ class Runner:
             executed += 1
             statuses[outcome.status] += 1
             billable += int(outcome.billable)
-            self.store.record_request(
-                run_id, self.clock(), self.source.name, "fares", outcome.status, outcome.billable,
+            self.usage.record_request(
+                usage_run_id, self.clock(), self.source.name, "fares", outcome.status, outcome.billable,
                 outcome.http_status, outcome.attempts, outcome.error, q.origin, q.destination, q.depart, q.ret,
             )
+            self.usage.commit()   # si la corrida se corta, las requests facturadas quedan contadas
             self._apply_outcome(run_id, q, outcome, seqs[q.destination])
             if not self.dry_run:
-                self.store.commit()   # si la corrida se corta, las requests facturadas quedan contadas
+                self.store.commit()
             if outcome.fatal:
                 fatal_error = f"HTTP {outcome.http_status}: {outcome.error}"
                 log.error("Error fatal de %s (%s): se cortan las consultas restantes.", self.source.name, fatal_error)
@@ -126,21 +141,22 @@ class Runner:
                                                     "Revisá IGNAV_API_KEY y el estado de la cuenta."))
 
         saved = plan.universe - executed
-        month_total = self.store.month_requests(now)
+        month_total = self.usage.month_requests(now)
         if self.cfg.alerts.summary_email:
             self._send_summary(now, mode, executed, saved, month_total, sent, plan)
 
         status = "ok" if not fatal_error and not statuses["error"] else "partial"
-        self.store.finish_run(
-            run_id, self.clock(), status, planned_queries=estimated, executed_queries=executed,
-            saved_queries=saved, billable_requests=billable, alerts_sent=sent, notes="; ".join(self.notes) or None,
-        )
+        counts = dict(planned_queries=estimated, executed_queries=executed, saved_queries=saved,
+                      billable_requests=billable, alerts_sent=sent, notes="; ".join(self.notes) or None)
+        self.store.finish_run(run_id, self.clock(), status, **counts)
+        if separate_usage:
+            self.usage.finish_run(usage_run_id, self.clock(), "dry_run", **counts)
         log.info(
-            "Corrida %s terminada: %d consultas hechas, %d ahorradas (universo %d), %d alertas. "
-            "Acumulado del mes: %d/%d%s",
-            mode, executed, saved, plan.universe, sent, month_total, limit,
-            " (dry-run: no se registra)" if self.dry_run else "",
+            "Corrida %s%s terminada: %d consultas hechas, %d ahorradas (universo %d), %d alertas. "
+            "Acumulado del mes: %d/%d",
+            mode, " (dry-run)" if self.dry_run else "", executed, saved, plan.universe, sent, month_total, limit,
         )
+        self.usage.commit()
         if not self.dry_run:
             self.store.commit()
         return 1 if fatal_error else 0
@@ -248,13 +264,13 @@ class Runner:
         for c, _ in alerts:
             if c.booking_url or not c.source_ref:
                 continue
-            if self.store.month_requests(now) + 1 > self.cfg.budget.max_requests_per_month:
+            if self.usage.month_requests(now) + 1 > self.cfg.budget.max_requests_per_month:
                 log.warning("Sin presupuesto para pedir links de reserva")
                 break
             outcome = self.source.booking_link(c.source_ref)
             billable += int(outcome.billable)
-            self.store.record_request(
-                run_id, self.clock(), self.source.name, "booking_link", "ok" if outcome.url else "error",
+            self.usage.record_request(
+                self._usage_run_id, self.clock(), self.source.name, "booking_link", "ok" if outcome.url else "error",
                 outcome.billable, outcome.http_status, outcome.attempts, outcome.error,
                 c.origin, c.destination, c.depart, c.ret,
             )

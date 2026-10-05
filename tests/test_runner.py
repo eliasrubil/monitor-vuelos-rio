@@ -13,11 +13,16 @@ from .conftest import FakeChannel, FakeSource, constant_prices, make_config
 
 
 def run_once(cfg, source, notifier, clock, full_scan=False, dry_run=False):
+    """Igual que la CLI: en dry-run los precios van a memoria y el uso a la base real."""
     store = Store.open(cfg.database.path, dry_run=dry_run)
+    usage = Store.open(cfg.database.path) if dry_run else None
     try:
-        return Runner(cfg, store, source, notifier, dry_run=dry_run, clock=clock).run(full_scan=full_scan)
+        return Runner(cfg, store, source, notifier, dry_run=dry_run, usage=usage, clock=clock).run(
+            full_scan=full_scan)
     finally:
         store.close()
+        if usage is not None:
+            usage.close()
 
 
 def db(cfg):
@@ -159,20 +164,46 @@ def test_budget_exceeded_skips_run_and_notifies(raw_config, tmp_path, notifier, 
     assert db(cfg).execute("SELECT status FROM runs").fetchone()[0] == "skipped_budget"
 
 
-def test_dry_run_does_not_touch_db_or_send(cfg, channels, clock):
-    run_once(cfg, FakeSource(constant_prices()), Notifier([channels["email"]]), clock)
-    before = open(cfg.database.path, "rb").read()
+PRICE_TABLES = ("observations", "pair_state", "dest_state", "alerts")
+
+
+def snapshot(cfg, tables=PRICE_TABLES):
+    conn = db(cfg)
+    try:
+        return {t: [tuple(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY rowid")] for t in tables}
+    finally:
+        conn.close()
+
+
+def test_dry_run_is_limited_and_counts_usage_without_writing_prices(cfg, notifier, clock):
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)
+    before = snapshot(cfg)
+    used_before = db(cfg).execute("SELECT COUNT(*) FROM requests WHERE billable = 1").fetchone()[0]
     clock.advance()
+
     src = FakeSource(constant_prices())
     assert run_once(cfg, src, LogNotifier(), clock, dry_run=True) == 0
-    assert src.calls   # sí consulta
-    assert open(cfg.database.path, "rb").read() == before
+    assert len(src.calls) == cfg.budget.dry_run_max_queries == 4
+    assert snapshot(cfg) == before                      # precios y estado intactos
+    conn = db(cfg)
+    assert conn.execute("SELECT COUNT(*) FROM requests WHERE billable = 1").fetchone()[0] == used_before + 4
+    dry = conn.execute("SELECT * FROM runs WHERE mode = 'dry_run'").fetchone()
+    assert dry["status"] == "dry_run" and dry["executed_queries"] == 4 and dry["billable_requests"] == 4
 
 
-def test_dry_run_without_db_does_not_create_it(cfg, clock):
+def test_dry_run_requests_count_towards_monthly_budget(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, budget={"max_requests_per_month": 237})
+    for _ in range(2):
+        run_once(cfg, FakeSource(constant_prices()), LogNotifier(), clock, dry_run=True)
+    src = FakeSource(constant_prices())
+    run_once(cfg, src, notifier, clock)       # 8 + 234 > 237: la línea base no entra
+    assert src.calls == []
+
+
+def test_dry_run_on_empty_db_only_records_usage(cfg, clock):
     run_once(cfg, FakeSource(constant_prices()), LogNotifier(), clock, dry_run=True)
-    import os
-    assert not os.path.exists(cfg.database.path)
+    assert snapshot(cfg) == {t: [] for t in PRICE_TABLES}
+    assert db(cfg).execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 4
 
 
 @pytest.fixture

@@ -66,6 +66,13 @@ class Plan:
     def saved(self) -> int:
         return sum(d.saved for d in self.destinations)
 
+    def limit_queries(self, max_queries: int) -> None:
+        """Recorta el plan a las primeras max_queries consultas (en el orden del plan)."""
+        remaining = max(max_queries, 0)
+        for d in self.destinations:
+            d.queries = d.queries[:remaining]
+            remaining -= len(d.queries)
+
     @property
     def is_full(self) -> bool:
         return all(d.full for d in self.destinations if d.queries) and bool(self.queries)
