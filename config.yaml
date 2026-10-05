@@ -1,0 +1,82 @@
+# Monitor de precios de vuelos Buenos Aires -> Brasil.
+# Todos los parámetros de la corrida viven acá. Los secrets NO van en este archivo:
+# se leen de variables de entorno (ver README).
+
+source: ignav            # adaptador de PriceSource a usar
+
+search:
+  # Ignav no acepta códigos de ciudad/metro (BUE) en los endpoints de tarifas
+  # ("do not send city or metro codes"), por eso se consultan EZE y AEP por separado.
+  # city_code solo se usa si la fuente declara soportarlo.
+  origins: [EZE, AEP]
+  city_code: BUE
+  destinations: [GIG, GRU, CFB]
+  # Ida y vuelta siempre al mismo destino. open_jaw: true habilitaría combinaciones
+  # tipo ida GIG / vuelta CFB, pero requiere un adaptador que lo soporte (Ignav todavía no).
+  open_jaw: false
+  departure_from: 2027-01-14   # fecha de ida >= esta
+  return_until: 2027-02-05     # fecha de vuelta <= esta
+  durations: [9, 10, 11]       # días entre ida y vuelta
+  adults: 5
+  max_stops: 1
+  cabin_class: economy
+  market: US                   # mercado de Ignav (define la moneda)
+  currency: USD                # moneda esperada; se descartan tarifas en otra moneda
+
+ignav:
+  base_url: https://ignav.com/api
+  timeout_seconds: 60
+  max_retries: 3               # reintentos ante timeouts, 424, 429 y 5xx
+  backoff_seconds: 2           # espera base; se duplica en cada reintento
+  # price.amount es el TOTAL de todos los pasajeros (verificado en el playground de Ignav):
+  # precio por persona = amount / adults.
+  price_is_total: true
+  allow_self_transfer: true    # default de la API
+
+budget:
+  max_requests_per_month: 2500 # si la corrida lo superaría, se saltea y se avisa
+  dry_run_max_queries: 4       # tope de consultas de un dry-run (se cobran y se suman al contador)
+
+optimization:
+  top_k: 8                     # pares de fechas más baratos por destino que se consultan siempre
+  rotating_k: 5                # pares extra del resto, el dato más viejo primero
+  max_staleness_runs: 6        # ningún par queda más de N corridas (de su destino) sin actualizar
+  no_service_after_empty_runs: 2
+  recheck_days: 14             # cada cuánto se reconsulta un par marcado no_service
+  reduced_destinations: [GRU]
+  reduced_interval_days: 7
+  reduced_reference_destination: GIG
+  gru_margin_usd: 80           # GRU pasa a normal si mediana_pp(GRU) <= mediana_pp(GIG) - margen
+
+detection:
+  temporal:                    # Regla A: el itinerario contra su propio historial
+    drop_pct: 0.15
+    robust_z: -2.5
+    min_observations: 7
+    mad_scale: 1.4826          # z robusto = (precio - mediana) / (mad_scale * MAD)
+  cross:                       # Regla B: contra los demás pares del mismo destino
+    percentile: 0.10
+    drop_pct: 0.15
+    min_pairs: 10
+  absolute_threshold_usd_pp: null   # Regla C: desactivada mientras sea null
+  antispam_min_drop_pct: 0.03
+
+alerts:
+  telegram: true
+  email: true
+  summary_email: true          # resumen por email en cada corrida
+  summary_top_n: 5
+  booking_links: true          # pide el link de reserva solo para itinerarios alertados
+
+schedule:
+  stop_after: 2027-01-10       # después de esta fecha la corrida termina sin consultar
+
+database:
+  path: data/prices.db
+
+airport_names:
+  EZE: Buenos Aires (Ezeiza)
+  AEP: Buenos Aires (Aeroparque)
+  GIG: Río de Janeiro (Galeão)
+  GRU: São Paulo (Guarulhos)
+  CFB: Cabo Frío

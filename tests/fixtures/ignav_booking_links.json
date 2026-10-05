@@ -1,0 +1,11 @@
+{
+  "itinerary": {"ignav_id": "bbb222"},
+  "booking_options": [
+    {
+      "legs": [],
+      "links": [
+        {"provider_name": "GOL", "provider_type": "airline", "fare_name": "Light", "price": {"amount": 2100, "currency": "USD"}, "url": "https://example.com/book?id=bbb222&pax=5"}
+      ]
+    }
+  ]
+}
