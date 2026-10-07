@@ -94,8 +94,7 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
         f"Precio bajo {c.shown_origin}→{c.destination} {c.depart:%d/%m}–{c.ret:%d/%m}: "
         f"{money(c.price_pp, c.currency)} por persona"
     )
-    codes = [a.strip() for a in c.airlines.split(",") if a.strip()]
-    airlines = ", ".join(cfg.airline(code) for code in codes) or "s/d"
+    airlines = airline_names(cfg, c)
     its = ev.itinerary_stats
     itin_extra = f"{its.n} obs., media {money(its.mean, c.currency)}" if its else "0 obs."
     win = ev.window_stats
@@ -133,22 +132,28 @@ def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str
     return subject, body
 
 
-def telegram_alert_entry(c: Candidate) -> str:
+def airline_names(cfg: Config, c: Candidate) -> str:
+    codes = [a.strip() for a in c.airlines.split(",") if a.strip()]
+    return ", ".join(cfg.airline(code) for code in codes) or "s/d"
+
+
+def telegram_alert_entry(cfg: Config, c: Candidate) -> str:
     amount = f"{c.price_pp:,.0f}".replace(",", ".")
     line = (f"{c.shown_origin} --> {c.destination} {c.depart:%d/%m} al {c.ret:%d/%m} ({c.duration} días) - "
             f"{amount}{c.currency} por persona")
     if c.same_price_count:
         line += f" (+{same_price_text(c)})"
+    line += f" - {airline_names(cfg, c)}"
     return "\n".join([line] + booking_lines(c))
 
 
-def telegram_alert_chunks(cands: list[Candidate], max_chars: int = TELEGRAM_MAX_CHARS) -> list[tuple[str, list[int]]]:
+def telegram_alert_chunks(cfg: Config, cands: list[Candidate], max_chars: int = TELEGRAM_MAX_CHARS) -> list[tuple[str, list[int]]]:
     """Todas las alertas en un único mensaje; si supera el límite de Telegram, se parte en varios mensajes sin
     cortar ninguna alerta. Devuelve (texto, índices de las alertas que contiene)."""
     chunks: list[tuple[str, list[int]]] = []
     text, idx = "", []
     for i, c in enumerate(cands):
-        entry = telegram_alert_entry(c)
+        entry = telegram_alert_entry(cfg, c)
         if text and len(text) + 1 + len(entry) > max_chars:
             chunks.append((text, idx))
             text, idx = "", []

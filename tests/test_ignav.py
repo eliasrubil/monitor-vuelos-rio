@@ -204,12 +204,21 @@ def test_city_code_search_reports_real_airports():
     assert (out.quote.depart_airport, out.quote.return_airport) == ("EZE", "AEP")
 
 
-def test_excluded_airport_discards_itineraries_through_it():
-    body = _with_airports(load_fixture("ignav_round_trip.json"))
-    # bbb222 (la más barata) pasa a hacer escala en SDU en la vuelta: se descarta y queda aaa111.
-    body["itineraries"][1]["inbound"]["segments"][0]["arrival_airport"] = "SDU"
-    src, _, _ = make_source([FakeResponse(200, body)])
+def test_excluded_airport_allowed_as_layover_but_not_as_endpoint():
     q = SearchQuery("BUE", "GIG", dt.date(2027, 1, 15), dt.date(2027, 1, 25), adults=5, max_stops=1,
                     cabin_class="economy", market="US", currency="USD", airports_exclude=("SDU",))
-    out = src.search_round_trip(q)
-    assert out.quote.source_ref == "aaa111"
+    # bbb222 (la más barata) hace escala en SDU en la ida y en la vuelta: se acepta.
+    body = _with_airports(load_fixture("ignav_round_trip.json"))
+    body["itineraries"][1]["outbound"]["segments"][0]["arrival_airport"] = "SDU"
+    body["itineraries"][1]["outbound"]["segments"][1]["departure_airport"] = "SDU"
+    body["itineraries"][1]["inbound"]["segments"][0]["arrival_airport"] = "SDU"
+    body["itineraries"][1]["inbound"]["segments"][1]["departure_airport"] = "SDU"
+    src, _, _ = make_source([FakeResponse(200, body)])
+    assert src.search_round_trip(q).quote.source_ref == "bbb222"
+
+    # Si la ida termina en SDU (o la vuelta sale de SDU), se descarta y queda aaa111.
+    for leg, idx, key in (("outbound", -1, "arrival_airport"), ("inbound", 0, "departure_airport")):
+        body = _with_airports(load_fixture("ignav_round_trip.json"))
+        body["itineraries"][1][leg]["segments"][idx][key] = "SDU"
+        src, _, _ = make_source([FakeResponse(200, body)])
+        assert src.search_round_trip(q).quote.source_ref == "aaa111", leg

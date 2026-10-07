@@ -13,6 +13,7 @@ def test_repo_config_loads():
     assert cfg.search.origins == ["BUE"]
     assert cfg.search.airports_exclude == ["SDU"] and cfg.search.airlines_exclude == ["FO"]
     assert cfg.optimization.gru_margin_usd == 50
+    assert cfg.detection.cross.max_rank == 3
     assert cfg.search.destinations == ["GIG", "GRU", "CFB"]
     assert cfg.search.open_jaw is False
     assert cfg.budget.max_requests_per_month == 2500

@@ -1,4 +1,4 @@
-"""Punto de entrada: python -m monitor [--dry-run] [--full-scan] [--test-alert]."""
+"""Punto de entrada: python -m monitor [--dry-run] [--full-scan] [--test-alert] [--demo-alert]."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", help="consulta y calcula, sin escribir la base ni alertar")
     p.add_argument("--full-scan", action="store_true", help="barrido completo de todas las combinaciones")
     p.add_argument("--test-alert", action="store_true", help="envía un mensaje de prueba por ambos canales y termina")
+    p.add_argument("--demo-alert", action="store_true",
+                   help="envía alertas simuladas (un email y un mensaje de Telegram) para ver el formato y termina")
     p.add_argument("-v", "--verbose", action="store_true", help="logging detallado")
     return p.parse_args(argv)
 
@@ -36,6 +38,17 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, OSError) as exc:
         log.error("Config inválida: %s", exc)
         return 2
+
+    if args.demo_alert:
+        from .demo import send_demo
+
+        notifier = build_notifier(cfg, secrets)
+        if not notifier.channels:
+            log.error("No hay canales configurados (revisá los secrets).")
+            return 1
+        delivered = send_demo(cfg, notifier, utcnow())
+        log.info("Alertas simuladas enviadas por: %s", ", ".join(delivered) or "ningún canal")
+        return 0 if len(delivered) == len(notifier.channels) else 1
 
     if args.test_alert:
         notifier = build_notifier(cfg, secrets)

@@ -81,7 +81,7 @@ class TemporalRuleConfig:
 
 @dataclass
 class CrossRuleConfig:
-    percentile: float = 0.10
+    max_rank: int = 3                # solo las N fechas más baratas del destino pueden alertar
     drop_pct: float = 0.15
     min_pairs: int = 10
 
@@ -213,6 +213,8 @@ def _validate(cfg: Config) -> Config:
     o.reduced_reference_destination = o.reduced_reference_destination.upper()
     if o.top_k < 0 or o.rotating_k < 0 or o.max_staleness_runs < 1:
         raise ConfigError("optimization: top_k/rotating_k >= 0 y max_staleness_runs >= 1")
+    if cfg.detection.cross.max_rank < 1:
+        raise ConfigError("detection.cross.max_rank debe ser >= 1")
     if cfg.budget.max_requests_per_month < 0 or cfg.budget.dry_run_max_queries < 0:
         raise ConfigError("budget.max_requests_per_month y budget.dry_run_max_queries deben ser >= 0")
     return cfg

@@ -315,7 +315,7 @@ class Runner:
             return 0
         leads = [members[0] for members in groups]
         telegram_ok: set[int] = set()
-        for text, indices in telegram_alert_chunks([c for c, _ in leads]):
+        for text, indices in telegram_alert_chunks(self.cfg, [c for c, _ in leads]):
             if self.notifier.send("", text, only={"telegram"}):
                 telegram_ok.update(indices)
         messages = [alert_message(self.cfg, c, ev) for c, ev in leads]

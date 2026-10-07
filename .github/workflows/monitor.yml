@@ -17,6 +17,10 @@ on:
         description: "Solo enviar un mensaje de prueba por Telegram y email"
         type: boolean
         default: false
+      demo_alert:
+        description: "Enviar alertas simuladas (un email y un Telegram) para ver el formato; no consulta la API"
+        type: boolean
+        default: false
 
 concurrency:
   group: monitor-vuelos
@@ -51,8 +55,10 @@ jobs:
           IN_DRY_RUN: ${{ inputs.dry_run }}
           IN_FULL_SCAN: ${{ inputs.full_scan }}
           IN_TEST_ALERT: ${{ inputs.test_alert }}
+          IN_DEMO_ALERT: ${{ inputs.demo_alert }}
         run: |
           args=()
+          if [ "$IN_DEMO_ALERT" = "true" ]; then args+=(--demo-alert); fi
           if [ "$IN_TEST_ALERT" = "true" ]; then args+=(--test-alert); fi
           if [ "$IN_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
           if [ "$IN_FULL_SCAN" = "true" ]; then args+=(--full-scan); fi
@@ -60,7 +66,7 @@ jobs:
 
       # También en dry-run: las requests se cobran y el contador de uso vive en la base.
       - name: Commitear la base
-        if: ${{ !cancelled() && inputs.test_alert != true }}
+        if: ${{ !cancelled() && inputs.test_alert != true && inputs.demo_alert != true }}
         env:
           IN_DRY_RUN: ${{ inputs.dry_run }}
         run: |

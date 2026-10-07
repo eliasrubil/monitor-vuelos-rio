@@ -3,13 +3,14 @@ import sqlite3
 from collections import defaultdict
 
 import pytest
+import yaml
 
 from monitor.alerts.channels import LogNotifier, Notifier
 from monitor.planner import plan_run
 from monitor.runner import Runner
 from monitor.storage import Store
 
-from .conftest import FakeChannel, FakeSource, constant_prices, make_config
+from .conftest import ROOT, FakeChannel, FakeSource, constant_prices, make_config
 
 
 def run_once(cfg, source, notifier, clock, full_scan=False, dry_run=False):
@@ -246,7 +247,7 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     assert len(channels["telegram"].sent) == 1
     subject, text = channels["telegram"].sent[0]
     assert subject == ""
-    assert text.splitlines() == ["EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona",
+    assert text.splitlines() == ["EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona - Aerolíneas Argentinas, GOL",
                                  "Reserva: https://example.com/book/BUE-GIG-2027-01-20-2027-01-30"]
     assert len(src.link_calls) == 1               # link solo para el alertado
     # email: una alerta (formato completo) + resumen
@@ -323,7 +324,7 @@ def test_same_price_dates_alert_once_and_are_all_recorded(big_cfg, notifier, cha
     run_once(cfg, src, notifier, clock, full_scan=True)
     (_, text), = channels["telegram"].sent
     assert text.splitlines()[0] == ("EZE/AEP --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
-                                    "(+2 fechas más con el mismo precio)")
+                                    "(+2 fechas más con el mismo precio) - Aerolíneas Argentinas, GOL")
     assert "18/01" not in text and "20/01" not in text
     assert len(src.link_calls) == 1                       # link solo para la primera
     assert "Hay 2 fechas más con el mismo precio." in channels["email"].sent[0][1]
@@ -353,7 +354,7 @@ def test_telegram_list_is_split_without_cutting_alerts():
     from monitor.alerts.format import Candidate, telegram_alert_chunks
     cands = [Candidate("AEP", "GRU", dt.date(2027, 1, 18), dt.date(2027, 1, 29), 1, "AR", 390.0, 1950.0, "USD", i,
                        booking_links=[("", "https://example.com/" + "x" * 300)]) for i in range(30)]
-    chunks = telegram_alert_chunks(cands)
+    chunks = telegram_alert_chunks(make_config(yaml.safe_load((ROOT / "config.yaml").read_text())), cands)
     assert len(chunks) > 1
     assert all(len(text) <= 4000 for text, _ in chunks)
     assert sorted(i for _, idx in chunks for i in idx) == list(range(30))

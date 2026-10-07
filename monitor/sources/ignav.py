@@ -127,8 +127,8 @@ class IgnavSource(PriceSource):
                 continue
             if set(c.airlines) & set(query.airlines_exclude):
                 continue
-            if set(c.airports) & set(query.airports_exclude):
-                continue
+            if set(c.endpoints) & set(query.airports_exclude):
+                continue   # excluido como salida o llegada; como escala está permitido
             if c.currency != query.currency:
                 if c.currency not in self._currency_warned:
                     log.warning("Ignav devolvió moneda %s (se esperaba %s); se descarta", c.currency, query.currency)
@@ -187,6 +187,12 @@ class IgnavSource(PriceSource):
             source_ref=it.get("ignav_id"),
             self_transfer=bool(it.get("requires_self_transfer", False)),
             airports=tuple(airports),
+            endpoints=(
+                _first_segment(it.get("outbound"), "departure_airport", first=True),
+                _first_segment(it.get("outbound"), "arrival_airport", first=False),
+                _first_segment(it.get("inbound"), "departure_airport", first=True),
+                _first_segment(it.get("inbound"), "arrival_airport", first=False),
+            ),
             depart_airport=_first_segment(it.get("outbound"), "departure_airport", first=True),
             return_airport=_first_segment(it.get("inbound"), "arrival_airport", first=False),
         )

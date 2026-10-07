@@ -45,8 +45,8 @@ y AEP, incluidas las combinaciones mixtas (ida desde EZE, vuelta a AEP). El aero
 tramo (`departure_airport` / `arrival_airport`) y se muestra en las alertas (`EZE`, `AEP` o `EZE/AEP` si ida
 y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB**: para Río se usa solo GIG
 (no el código de ciudad `RIO`, que incluye Santos Dumont) y para São Paulo solo GRU.
-`search.airports_exclude: [SDU]` descarta cualquier itinerario que salga, llegue o haga escala en Santos
-Dumont.
+`search.airports_exclude: [SDU]` impide que Santos Dumont sea la salida o la llegada de la ida o de la vuelta
+(nunca es destino). Como escala sí se acepta: BUE → SDU → GIG en la ida o GIG → SDU → BUE en la vuelta.
 
 **Optimización de consultas** (por destino):
 
@@ -67,7 +67,7 @@ optimización se hace eligiendo qué pares consultar.
   `precio_pp < media × (1 − 0.15)` o si el z robusto `(precio − mediana) / (1.4826 × MAD) < −2.5`.
   Si el MAD es 0 (precios idénticos), solo aplica la condición de la media.
 - **Regla B (transversal):** el itinerario contra el último precio conocido de todos los pares del mismo
-  destino (mínimo 10 pares). Alerta si está en el 10% más barato **y** ≥ 15% debajo de la media.
+  destino (mínimo 10 pares). Alerta si está entre las **3 fechas más baratas** del destino (`max_rank`) **y** ≥ 15% debajo de la media.
 - **Regla C (absoluta):** `absolute_threshold_usd_pp`, desactivada mientras sea `null`.
 - Si se disparan varias reglas, se manda **una sola alerta**. La regla no se muestra en el mensaje, pero
   queda guardada en la tabla `alerts` y en el log de la corrida.
@@ -78,9 +78,9 @@ optimización se hace eligiendo qué pares consultar.
 el límite de caracteres de Telegram se parte en varios mensajes, sin cortar ninguna alerta):
 
 ```
-AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona
+AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona - Aerolíneas Argentinas
 Reserva: https://...
-EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio)
+EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio) - JetSMART
 Reserva Ida: https://...
 Reserva Vuelta: https://...
 ```
@@ -207,6 +207,8 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   los mensajes en el log, pero **no guarda precios ni envía alertas**. Como Ignav cobra esas requests,
   **se suman al contador de uso del mes**: el workflow registra la corrida (`runs.mode = 'dry_run'`) y las
   requests en la base, y la commitea.
+- **demo_alert:** manda alertas simuladas (un email y un mensaje de Telegram) para ver cómo se ven, sin
+  consultar la API ni tocar la base.
 - **full_scan:** barrido completo de todas las combinaciones (117 requests).
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
