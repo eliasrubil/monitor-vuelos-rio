@@ -37,7 +37,7 @@ bajos.
 config.yaml ─┐
              ▼
   planner ──► PriceSource (Ignav) ──► SQLite ──► detección (A/B/C) ──► Telegram + email
-  (qué consultar)  (timeouts, reintentos)        (+ anti-spam)            (+ resumen por email)
+  (qué consultar)  (timeouts, reintentos)        (+ anti-spam)            (+ resumen por Telegram)
 ```
 
 **Origen y destinos.** El origen es `BUE`, el código de ciudad de Buenos Aires: una sola consulta cubre EZE
@@ -85,8 +85,9 @@ Reserva Ida: https://...
 Reserva Vuelta: https://...
 ```
 
-El email recibe uno por corrida con todas las alertas en formato completo, más un **resumen** (top 5 más
-baratos y media por destino) que se puede desactivar. Si varias fechas del mismo origen y destino alertan con
+El email llega **uno solo por día**, con todas las alertas en formato completo (si no hay alertas, no se
+manda). El **resumen** de la corrida (consultas, top 5 más baratos y media por destino) va por Telegram y se
+puede desactivar. Si varias fechas del mismo origen y destino alertan con
 exactamente el mismo precio, se avisa solo la primera y se indica cuántas más tienen ese precio (todas quedan
 registradas para el anti-spam). Si un canal
 falla, se envía igual por el otro y se registra el error. Si ambos fallan, la alerta no queda registrada y se
@@ -255,7 +256,7 @@ producen un error, así un typo no pasa desapercibido. Lo más común:
 | Cambiar el tope mensual | `budget.max_requests_per_month` |
 | Ajustar la sensibilidad | `detection.temporal.*`, `detection.cross.*` |
 | Alerta por precio fijo | `detection.absolute_threshold_usd_pp: 350` (por persona, USD) |
-| Sin resumen diario | `alerts.summary_email: false` |
+| Sin resumen diario por Telegram | `alerts.summary_telegram: false` |
 | Sin links de reserva (ahorra requests) | `alerts.booking_links: false` |
 | Apagar un canal | `alerts.telegram: false` o `alerts.email: false` |
 | Otra fecha de fin | `schedule.stop_after` |

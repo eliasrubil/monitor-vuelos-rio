@@ -26,6 +26,15 @@ def run_once(cfg, source, notifier, clock, full_scan=False, dry_run=False):
             usage.close()
 
 
+def alerts_sent(channel):
+    """Mensajes de alertas (sin el resumen diario, que va por Telegram)."""
+    return [(s, t) for s, t in channel.sent if not s.startswith("Resumen vuelos")]
+
+
+def summaries_sent(channel):
+    return [(s, t) for s, t in channel.sent if s.startswith("Resumen vuelos")]
+
+
 def db(cfg):
     conn = sqlite3.connect(cfg.database.path)
     conn.row_factory = sqlite3.Row
@@ -46,8 +55,10 @@ def test_first_run_is_full_scan(cfg, notifier, channels, clock):
     assert obs["price_total"] == obs["price_pp"] * 5
     assert obs["duration_days"] == 9 and obs["currency"] == "USD" and obs["airlines"] == "AR,G3"
     # resumen por email, nada por Telegram (no hay historial suficiente para alertar)
-    assert len(channels["email"].sent) == 1
-    assert "Top 5" in channels["email"].sent[0][1]
+    # sin alertas: no hay email; el resumen va por Telegram
+    assert channels["email"].sent == []
+    (summary,) = summaries_sent(channels["telegram"])
+    assert "Top 5" in summary[1]
 
 
 def test_incremental_run_selects_top_rotating_and_skips_reduced_gru(cfg, notifier, clock):
@@ -244,14 +255,15 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
 
     src = FakeSource(drop_for(pair, 300), airports_fn=lambda q: ("EZE", "EZE"))
     run_once(cfg, src, notifier, clock, full_scan=True)
-    assert len(channels["telegram"].sent) == 1
-    subject, text = channels["telegram"].sent[0]
+    assert len(alerts_sent(channels["telegram"])) == 1 and len(summaries_sent(channels["telegram"])) == 1
+    subject, text = alerts_sent(channels["telegram"])[0]
     assert subject == ""
     assert text.splitlines() == ["EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona - Aerolíneas Argentinas, GOL",
                                  "Reserva: https://example.com/book/BUE-GIG-2027-01-20-2027-01-30"]
     assert len(src.link_calls) == 1               # link solo para el alertado
     # email: una alerta (formato completo) + resumen
-    assert len(channels["email"].sent) == 2
+    # un único email por día: solo las alertas
+    assert len(channels["email"].sent) == 1
     mail_subject, mail = channels["email"].sent[0]
     assert "GIG" in mail_subject and "300" in mail_subject
     assert "Vs. itinerario:" in mail and "USD 1.500 total" in mail and "10 días" in mail
@@ -259,11 +271,11 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     clock.advance()
     channels["telegram"].sent.clear()
     run_once(cfg, FakeSource(drop_for(pair, 295)), notifier, clock, full_scan=True)   # baja < 3%
-    assert channels["telegram"].sent == []
+    assert alerts_sent(channels["telegram"]) == []
 
     clock.advance()
     run_once(cfg, FakeSource(drop_for(pair, 290)), notifier, clock, full_scan=True)   # 290 <= 300*0.97
-    assert len(channels["telegram"].sent) == 1
+    assert len(alerts_sent(channels["telegram"])) == 1
 
     alerts = db(cfg).execute("SELECT * FROM alerts ORDER BY id").fetchall()
     assert [a["price_pp"] for a in alerts] == [300, 290]
@@ -322,7 +334,7 @@ def test_same_price_dates_alert_once_and_are_all_recorded(big_cfg, notifier, cha
 
     src = FakeSource(prices, airports_fn=lambda q: ("EZE", "AEP"))   # ida desde EZE, vuelta a AEP
     run_once(cfg, src, notifier, clock, full_scan=True)
-    (_, text), = channels["telegram"].sent
+    (_, text), = alerts_sent(channels["telegram"])
     assert text.splitlines()[0] == ("EZE/AEP --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
                                     "(+2 fechas más con el mismo precio) - Aerolíneas Argentinas, GOL")
     assert "18/01" not in text and "20/01" not in text
@@ -334,7 +346,7 @@ def test_same_price_dates_alert_once_and_are_all_recorded(big_cfg, notifier, cha
     clock.advance()
     channels["telegram"].sent.clear()
     run_once(cfg, FakeSource(prices), notifier, clock, full_scan=True)
-    assert channels["telegram"].sent == []                # al día siguiente no se repite ninguna
+    assert alerts_sent(channels["telegram"]) == []        # al día siguiente no se repite ninguna
 
 
 def test_excluded_airline_never_alerts(big_cfg, notifier, channels, clock):
@@ -346,7 +358,7 @@ def test_excluded_airline_never_alerts(big_cfg, notifier, channels, clock):
                      airlines_fn=lambda q: ("FO",) if (q.depart, q.ret) == pair else ("AR",))
     run_once(cfg, src, notifier, clock, full_scan=True)
     assert all(q.airlines_exclude == ("FO",) for q in src.calls)
-    assert channels["telegram"].sent == []
+    assert alerts_sent(channels["telegram"]) == []
     assert db(cfg).execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
 
 
