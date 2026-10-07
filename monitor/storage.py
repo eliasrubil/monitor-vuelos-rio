@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
 from .sources.base import Quote
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -106,7 +109,24 @@ CREATE TABLE IF NOT EXISTS alerts (
     channels TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_itin ON alerts(destination, depart_date, return_date);
+
+-- Migraciones de datos ya aplicadas.
+CREATE TABLE IF NOT EXISTS migrations (
+    name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    detail TEXT
+);
 """
+
+# Corridas del 2026-10-06 y 2026-10-07 guardadas con price_is_total: false, cuando Ignav devuelve el
+# total de los 5 adultos: precio por persona y total quedaron multiplicados por 5. Se dividen una vez.
+PRICE_SCALE_FIX = "2026-10-07_price_is_total_x5"
+PRICE_SCALE_FACTOR = 5
+PRICE_COLUMNS = {
+    "observations": ("price_pp", "price_total"),
+    "pair_state": ("last_price_pp", "last_price_total"),
+    "alerts": ("price_pp", "price_total"),
+}
 
 
 def iso(ts: dt.datetime) -> str:
@@ -156,6 +176,22 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (PRICE_SCALE_FIX,)).fetchone():
+            return
+        counts = []
+        for table, cols in PRICE_COLUMNS.items():
+            sets = ", ".join(f"{c} = ROUND({c} / {PRICE_SCALE_FACTOR}.0, 2)" for c in cols)
+            cur = self.conn.execute(f"UPDATE {table} SET {sets} WHERE {cols[0]} IS NOT NULL")
+            counts.append(f"{table}={cur.rowcount}")
+        detail = f"precios / {PRICE_SCALE_FACTOR}: " + ", ".join(counts)
+        self.conn.execute("INSERT INTO migrations (name, applied_at, detail) VALUES (?, ?, ?)",
+                          (PRICE_SCALE_FIX, iso(dt.datetime.now(dt.timezone.utc)), detail))
+        self.conn.commit()
+        if any(not c.endswith("=0") for c in counts):
+            log.warning("Migración %s aplicada: %s", PRICE_SCALE_FIX, detail)
 
     # ----------------------------------------------------------- apertura
     @classmethod
