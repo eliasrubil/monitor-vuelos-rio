@@ -23,6 +23,7 @@ class SearchQuery:
     cabin_class: str
     market: str
     currency: str
+    airlines_exclude: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,12 +53,18 @@ class SearchOutcome:
 
 @dataclass
 class LinkOutcome:
-    url: Optional[str] = None
+    # (etiqueta, url): etiqueta "" = link para ida y vuelta; "Ida"/"Vuelta" = link de un solo tramo
+    # (url None si ese tramo no tiene link).
+    links: list[tuple[str, Optional[str]]] = field(default_factory=list)
     http_status: Optional[int] = None
     attempts: int = 0
     billable: bool = False
     error: Optional[str] = None
     fatal: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return any(url for _, url in self.links)
 
 
 class PriceSource(ABC):

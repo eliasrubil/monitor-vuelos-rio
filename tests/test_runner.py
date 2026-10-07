@@ -241,13 +241,15 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     run_once(cfg, src, notifier, clock, full_scan=True)
     assert len(channels["telegram"].sent) == 1
     subject, text = channels["telegram"].sent[0]
-    assert "GIG" in subject and "300" in subject
-    assert "Vs. itinerario:" in text and "Vs. ventana GIG:" in text and "Regla" not in text
-    assert "USD 1.500 total" in text and "10 días" in text
-    assert "https://example.com/book/" in text
+    assert subject == ""
+    assert text.splitlines() == ["EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona",
+                                 "Reserva: https://example.com/book/EZE-GIG-2027-01-20-2027-01-30"]
     assert len(src.link_calls) == 1               # link solo para el alertado
-    # email: una alerta + resumen
+    # email: una alerta (formato completo) + resumen
     assert len(channels["email"].sent) == 2
+    mail_subject, mail = channels["email"].sent[0]
+    assert "GIG" in mail_subject and "300" in mail_subject
+    assert "Vs. itinerario:" in mail and "USD 1.500 total" in mail and "10 días" in mail
 
     clock.advance()
     channels["telegram"].sent.clear()
@@ -298,3 +300,58 @@ def test_stop_after(cfg, notifier, clock):
     src = FakeSource(constant_prices())
     assert run_once(cfg, src, notifier, clock) == 0
     assert src.calls == []
+
+
+def test_same_price_dates_alert_once_and_are_all_recorded(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)
+    channels["telegram"].sent.clear()
+    channels["email"].sent.clear()
+    base = constant_prices()
+    tied = {(dt.date(2027, 1, d), dt.date(2027, 1, d + 10)) for d in (16, 18, 20)}
+
+    def prices(q):
+        if q.destination == "GIG" and q.origin == "EZE" and (q.depart, q.ret) in tied:
+            return 250
+        return base(q)
+
+    src = FakeSource(prices)
+    run_once(cfg, src, notifier, clock, full_scan=True)
+    (_, text), = channels["telegram"].sent
+    assert text.splitlines()[0] == ("EZE --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
+                                    "(+2 fechas más con el mismo precio)")
+    assert "18/01" not in text and "20/01" not in text
+    assert len(src.link_calls) == 1                       # link solo para la primera
+    assert "Hay 2 fechas más con el mismo precio." in channels["email"].sent[0][1]
+    recorded = db(cfg).execute("SELECT depart_date FROM alerts ORDER BY depart_date").fetchall()
+    assert [r[0] for r in recorded] == ["2027-01-16", "2027-01-18", "2027-01-20"]   # anti-spam para todas
+
+    clock.advance()
+    channels["telegram"].sent.clear()
+    run_once(cfg, FakeSource(prices), notifier, clock, full_scan=True)
+    assert channels["telegram"].sent == []                # al día siguiente no se repite ninguna
+
+
+def test_excluded_airline_never_alerts(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)
+    channels["telegram"].sent.clear()
+    pair = (dt.date(2027, 1, 20), dt.date(2027, 1, 30))
+    src = FakeSource(drop_for(pair, 100),
+                     airlines_fn=lambda q: ("FO",) if (q.depart, q.ret) == pair else ("AR",))
+    run_once(cfg, src, notifier, clock, full_scan=True)
+    assert all(q.airlines_exclude == ("FO",) for q in src.calls)
+    assert channels["telegram"].sent == []
+    assert db(cfg).execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
+
+
+def test_telegram_list_is_split_without_cutting_alerts():
+    from monitor.alerts.format import Candidate, telegram_alert_chunks
+    cands = [Candidate("AEP", "GRU", dt.date(2027, 1, 18), dt.date(2027, 1, 29), 1, "AR", 390.0, 1950.0, "USD", i,
+                       booking_links=[("", "https://example.com/" + "x" * 300)]) for i in range(30)]
+    chunks = telegram_alert_chunks(cands)
+    assert len(chunks) > 1
+    assert all(len(text) <= 4000 for text, _ in chunks)
+    assert sorted(i for _, idx in chunks for i in idx) == list(range(30))
+    for text, idx in chunks:
+        assert text.count(" --> ") == len(idx) == text.count("Reserva: ")

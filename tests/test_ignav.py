@@ -139,10 +139,42 @@ def test_booking_link():
     out = src.booking_link("bbb222")
     assert http.calls[0]["url"] == "https://ignav.com/api/fares/booking-links"
     assert http.calls[0]["json"] == {"ignav_id": "bbb222"}
-    assert out.url == "https://example.com/book?id=bbb222&pax=5"
+    assert out.links == [("", "https://example.com/book?id=bbb222&pax=5")]
     assert out.billable
 
 
 def test_missing_api_key_is_rejected():
     with pytest.raises(ValueError):
         IgnavSource("", IgnavConfig(), http=FakeHTTP([]))
+
+
+def _option(legs, url):
+    return {"legs": legs, "links": [{"provider_name": "X", "provider_type": "airline", "url": url}]}
+
+
+def test_booking_link_prefers_round_trip_option():
+    from monitor.sources.ignav import pick_booking_links
+    options = [_option(["inbound"], "https://v"), _option(["outbound", "inbound"], "https://rt"),
+               _option(["outbound"], "https://i")]
+    assert pick_booking_links(options) == [("", "https://rt")]
+
+
+def test_booking_link_per_leg_when_no_round_trip_option():
+    from monitor.sources.ignav import pick_booking_links
+    assert pick_booking_links([_option(["inbound"], "https://v"), _option(["outbound"], "https://i")]) == [
+        ("Ida", "https://i"), ("Vuelta", "https://v")]
+    assert pick_booking_links([_option(["inbound"], "https://v")]) == [("Ida", None), ("Vuelta", "https://v")]
+    assert pick_booking_links([]) == []
+
+
+def test_excluded_airlines_are_sent_and_filtered():
+    body = load_fixture("ignav_round_trip.json")
+    # La más barata dentro de 1 escala es bbb222 (AR + G3); si se excluye G3 queda aaa111 (G3) también fuera.
+    body["itineraries"][0]["outbound"]["segments"][0]["marketing_carrier_code"] = "AR"
+    body["itineraries"][0]["inbound"]["segments"][0]["marketing_carrier_code"] = "AR"
+    src, http, _ = make_source([FakeResponse(200, body)])
+    q = SearchQuery("EZE", "GIG", dt.date(2027, 1, 15), dt.date(2027, 1, 25), adults=5, max_stops=1,
+                    cabin_class="economy", market="US", currency="USD", airlines_exclude=("G3",))
+    out = src.search_round_trip(q)
+    assert http.calls[0]["json"]["airlines_exclude"] == ["G3"]
+    assert out.quote.source_ref == "aaa111" and out.quote.airlines == ("AR",)

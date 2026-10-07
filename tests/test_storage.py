@@ -59,3 +59,33 @@ def test_new_database_is_not_rescaled(tmp_path):
     conn.close()
     Store.open(path).close()
     assert sqlite3.connect(path).execute("SELECT price_pp FROM observations").fetchone()[0] == 400
+
+
+def test_flybondi_observations_are_dropped_and_pairs_reset(tmp_path):
+    path = tmp_path / "prices.db"
+    store = Store.open(path)
+    c = store.conn
+    c.execute("INSERT INTO runs (started_at, mode, status) VALUES ('t0', 'full', 'ok'), ('t1', 'full', 'ok')")
+    rows = [("AEP", "2027-01-14", "FO", 163, "t1"), ("EZE", "2027-01-14", "AR", 300, "t1"),
+            ("AEP", "2027-01-15", "AR", 310, "t0"), ("AEP", "2027-01-15", "FO", 170, "t1")]
+    for origin, dep, airline, price, ts in rows:
+        c.execute("""INSERT INTO observations (run_id, ts_utc, source, origin, destination, depart_date, return_date,
+            duration_days, stops, airlines, price_total, price_pp, currency) VALUES (?, ?, 'ignav', ?, 'GIG', ?,
+            '2027-01-24', 10, 0, ?, ?, ?, 'USD')""", (1 if ts == "t0" else 2, ts, origin, dep, airline, price * 5,
+                                                       price))
+        c.execute("""INSERT OR REPLACE INTO pair_state (origin, destination, depart_date, return_date, last_price_pp,
+            last_price_total, last_price_at, last_queried_seq) VALUES (?, 'GIG', ?, '2027-01-24', ?, ?, ?, 3)""",
+                  (origin, dep, price, price * 5, ts))
+    c.execute("DELETE FROM migrations WHERE name = '2026-10-08_exclude_flybondi'")
+    c.commit()
+    store.close()
+
+    Store.open(path).close()
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT origin, depart_date, airlines FROM observations ORDER BY id").fetchall() == [
+        ("EZE", "2027-01-14", "AR"), ("AEP", "2027-01-15", "AR")]
+    state = dict(((o, d), (p, s)) for o, d, p, s in conn.execute(
+        "SELECT origin, depart_date, last_price_pp, last_queried_seq FROM pair_state"))
+    assert state[("AEP", "2027-01-14")] == (None, None)       # el último precio era Flybondi
+    assert state[("AEP", "2027-01-15")] == (None, None)
+    assert state[("EZE", "2027-01-14")] == (300, 3)           # no se toca

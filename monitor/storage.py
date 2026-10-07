@@ -122,6 +122,10 @@ CREATE TABLE IF NOT EXISTS migrations (
 # total de los 5 adultos: precio por persona y total quedaron multiplicados por 5. Se dividen una vez.
 PRICE_SCALE_FIX = "2026-10-07_price_is_total_x5"
 PRICE_SCALE_FACTOR = 5
+# Flybondi (FO) queda excluida: se borran sus observaciones y se invalida el último precio de los pares que
+# venían de ella, para que no cuente en las medias ni en el top de fechas (se reconsultan primero).
+EXCLUDE_FLYBONDI = "2026-10-08_exclude_flybondi"
+EXCLUDED_AIRLINE = "FO"
 PRICE_COLUMNS = {
     "observations": ("price_pp", "price_total"),
     "pair_state": ("last_price_pp", "last_price_total"),
@@ -179,19 +183,38 @@ class Store:
         self._migrate()
 
     def _migrate(self) -> None:
-        if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (PRICE_SCALE_FIX,)).fetchone():
-            return
-        counts = []
+        for name, fn in ((PRICE_SCALE_FIX, self._rescale_prices), (EXCLUDE_FLYBONDI, self._drop_flybondi)):
+            if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (name,)).fetchone():
+                continue
+            counts = fn()
+            detail = ", ".join(f"{k}={v}" for k, v in counts.items())
+            self.conn.execute("INSERT INTO migrations (name, applied_at, detail) VALUES (?, ?, ?)",
+                              (name, iso(dt.datetime.now(dt.timezone.utc)), detail))
+            self.conn.commit()
+            if any(counts.values()):
+                log.warning("Migración %s aplicada: %s", name, detail)
+
+    def _rescale_prices(self) -> dict[str, int]:
+        counts = {}
         for table, cols in PRICE_COLUMNS.items():
             sets = ", ".join(f"{c} = ROUND({c} / {PRICE_SCALE_FACTOR}.0, 2)" for c in cols)
-            cur = self.conn.execute(f"UPDATE {table} SET {sets} WHERE {cols[0]} IS NOT NULL")
-            counts.append(f"{table}={cur.rowcount}")
-        detail = f"precios / {PRICE_SCALE_FACTOR}: " + ", ".join(counts)
-        self.conn.execute("INSERT INTO migrations (name, applied_at, detail) VALUES (?, ?, ?)",
-                          (PRICE_SCALE_FIX, iso(dt.datetime.now(dt.timezone.utc)), detail))
-        self.conn.commit()
-        if any(not c.endswith("=0") for c in counts):
-            log.warning("Migración %s aplicada: %s", PRICE_SCALE_FIX, detail)
+            counts[table] = self.conn.execute(f"UPDATE {table} SET {sets} WHERE {cols[0]} IS NOT NULL").rowcount
+        return counts
+
+    def _drop_flybondi(self) -> dict[str, int]:
+        rows = [r for r in self.conn.execute(
+                    "SELECT id, origin, destination, depart_date, return_date, ts_utc, airlines FROM observations")
+                if EXCLUDED_AIRLINE in {a.strip() for a in (r["airlines"] or "").split(",")}]
+        self.conn.executemany("DELETE FROM observations WHERE id = ?", [(r["id"],) for r in rows])
+        # Pares cuyo último precio era esa observación: sin precio y "nunca consultados" (se reconsultan primero).
+        reset = 0
+        for r in rows:
+            reset += self.conn.execute(
+                """UPDATE pair_state SET last_price_pp = NULL, last_price_total = NULL, last_queried_seq = NULL
+                   WHERE origin = ? AND destination = ? AND depart_date = ? AND return_date = ?
+                     AND last_price_at = ?""",
+                (r["origin"], r["destination"], r["depart_date"], r["return_date"], r["ts_utc"])).rowcount
+        return {"observations_borradas": len(rows), "pair_state_reseteados": reset}
 
     # ----------------------------------------------------------- apertura
     @classmethod

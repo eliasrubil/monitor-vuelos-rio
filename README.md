@@ -70,11 +70,29 @@ optimización se hace eligiendo qué pares consultar.
 - **Anti-spam:** un itinerario ya alertado solo se vuelve a alertar si su precio baja ≥ 3% respecto de la
   última alerta.
 
-**Alertas.** Telegram recibe un mensaje por itinerario. El email recibe uno por corrida con todas las
-alertas, más un **resumen** (top 5 más baratos y media por destino) que se puede desactivar. Si un canal
+**Alertas.** Telegram recibe **un solo mensaje por corrida** con todas las alertas en formato corto (si supera
+el límite de caracteres de Telegram se parte en varios mensajes, sin cortar ninguna alerta):
+
+```
+AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona
+Reserva: https://...
+EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio)
+Reserva Ida: https://...
+Reserva Vuelta: https://...
+```
+
+El email recibe uno por corrida con todas las alertas en formato completo, más un **resumen** (top 5 más
+baratos y media por destino) que se puede desactivar. Si varias fechas del mismo origen y destino alertan con
+exactamente el mismo precio, se avisa solo la primera y se indica cuántas más tienen ese precio (todas quedan
+registradas para el anti-spam). Si un canal
 falla, se envía igual por el otro y se registra el error. Si ambos fallan, la alerta no queda registrada y se
 vuelve a intentar en la próxima corrida. El link de reserva (`POST /api/fares/booking-links`) se pide **solo
-para los itinerarios que disparan alerta**.
+para los itinerarios que disparan alerta**; se prefiere un link que cubra ida y vuelta y, si la fuente solo
+ofrece links por tramo, se muestran por separado como "Ida" y "Vuelta".
+
+**Aerolíneas excluidas.** `search.airlines_exclude` (por defecto `[FO]`, Flybondi) se envía a la API y además
+se descarta cualquier itinerario con un tramo de esas aerolíneas, así que nunca pueden generar una alerta. Los
+precios de Flybondi guardados antes de este cambio se borraron de la base con una migración automática.
 
 Ejemplo de alerta:
 

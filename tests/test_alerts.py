@@ -165,3 +165,12 @@ def test_no_emojis_in_any_message(cfg):
     emoji = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]")
     for subject, body in messages:
         assert not emoji.search(subject + body), subject
+
+
+def test_alert_message_with_per_leg_links_and_same_price(cfg):
+    c = Candidate("AEP", "CFB", dt.date(2027, 1, 26), dt.date(2027, 2, 5), 1, "AR", 901.6, 4508.0, "USD", 1,
+                  booking_links=[("Ida", None), ("Vuelta", "https://v")], same_price_count=1)
+    ev = evaluate(901.6, [], [], DetectionConfig(), dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc))
+    _, text = alert_message(cfg, c, ev)
+    assert "Hay 1 fecha más con el mismo precio." in text
+    assert "Reserva Ida: sin link disponible\nReserva Vuelta: https://v" in text

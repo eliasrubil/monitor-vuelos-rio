@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..config import Config
 from ..detection import Evaluation
 
 STATS_TITLE = ">>STATS<<"
+TELEGRAM_MAX_CHARS = 4000   # Telegram admite 4096 caracteres por mensaje
 WEEKDAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
 
@@ -30,6 +31,10 @@ class Candidate:
     source_ref: Optional[str] = None
     booking_url: Optional[str] = None
     self_transfer: bool = False
+    # Links de reserva: [("", url)] para ida y vuelta, o [("Ida", url), ("Vuelta", url)] por tramo.
+    booking_links: list[tuple[str, Optional[str]]] = field(default_factory=list)
+    # Cuántas otras fechas del mismo origen y destino alertaron en esta corrida con el mismo precio.
+    same_price_count: int = 0
 
     @property
     def duration(self) -> int:
@@ -46,6 +51,18 @@ def pct(value: float) -> str:
 
 def fdate(d: dt.date) -> str:
     return f"{WEEKDAYS[d.weekday()]} {d:%d/%m/%Y}"
+
+
+def booking_lines(c: Candidate) -> list[str]:
+    links = c.booking_links or ([("", c.booking_url)] if c.booking_url else [])
+    if not any(url for _, url in links):
+        return ["Reserva: sin link disponible"]
+    return [f"Reserva{f' {label}' if label else ''}: {url or 'sin link disponible'}" for label, url in links]
+
+
+def same_price_text(c: Candidate) -> str:
+    n = c.same_price_count
+    return "1 fecha más con el mismo precio" if n == 1 else f"{n} fechas más con el mismo precio"
 
 
 def _vs_line(label: str, below: Optional[float], extra: str) -> str:
@@ -76,8 +93,10 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
         airlines,
         f"Precio: {money(c.price_pp, c.currency)} por persona · {money(c.price_total, c.currency)} total "
         f"({cfg.search.adults} adultos, con impuestos)",
-        f"Reserva: {c.booking_url}" if c.booking_url else "Reserva: sin link disponible",
     ]
+    if c.same_price_count:
+        details.append(f"Hay {same_price_text(c)}.")
+    details += booking_lines(c)
     if c.self_transfer:
         details.append("Atención: requiere self-transfer (tramos en tickets separados).")
     stats = [
@@ -95,6 +114,32 @@ def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str
     subject = f"{len(messages)} precios bajos detectados"
     body = "\n\n".join(f"{s}\n{'-' * min(len(s), 60)}\n{t}" for s, t in messages)
     return subject, body
+
+
+def telegram_alert_entry(c: Candidate) -> str:
+    amount = f"{c.price_pp:,.0f}".replace(",", ".")
+    line = (f"{c.origin} --> {c.destination} {c.depart:%d/%m} al {c.ret:%d/%m} ({c.duration} días) - "
+            f"{amount}{c.currency} por persona")
+    if c.same_price_count:
+        line += f" (+{same_price_text(c)})"
+    return "\n".join([line] + booking_lines(c))
+
+
+def telegram_alert_chunks(cands: list[Candidate], max_chars: int = TELEGRAM_MAX_CHARS) -> list[tuple[str, list[int]]]:
+    """Todas las alertas en un único mensaje; si supera el límite de Telegram, se parte en varios mensajes sin
+    cortar ninguna alerta. Devuelve (texto, índices de las alertas que contiene)."""
+    chunks: list[tuple[str, list[int]]] = []
+    text, idx = "", []
+    for i, c in enumerate(cands):
+        entry = telegram_alert_entry(c)
+        if text and len(text) + 1 + len(entry) > max_chars:
+            chunks.append((text, idx))
+            text, idx = "", []
+        text = f"{text}\n{entry}" if text else entry
+        idx.append(i)
+    if text:
+        chunks.append((text, idx))
+    return chunks
 
 
 @dataclass
