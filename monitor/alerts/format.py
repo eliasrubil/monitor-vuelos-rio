@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..config import Config
-from ..detection import RULE_NAMES, Evaluation
+from ..detection import Evaluation
 
 WEEKDAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
@@ -56,42 +56,42 @@ def _vs_line(label: str, below: Optional[float], extra: str) -> str:
 
 def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     subject = (
-        f"✈️ Precio bajo {c.origin}→{c.destination} {c.depart:%d/%m}–{c.ret:%d/%m}: "
+        f"Precio bajo {c.origin}→{c.destination} {c.depart:%d/%m}–{c.ret:%d/%m}: "
         f"{money(c.price_pp, c.currency)} por persona"
     )
+    codes = [a.strip() for a in c.airlines.split(",") if a.strip()]
+    airlines = ", ".join(cfg.airline(code) for code in codes) or "s/d"
     its = ev.itinerary_stats
     itin_extra = f"{its.n} obs., media {money(its.mean, c.currency)}" if its else "0 obs."
     win = ev.window_stats
     if win:
-        age = ev.window_age_days
-        age_txt = f"datos de {age[0]} a {age[1]} días de antigüedad" if age else ""
         rank_txt = f"puesto {ev.window_rank} de {win.n}, " if ev.window_rank else f"{win.n} pares, "
-        win_extra = f"{rank_txt}media {money(win.mean, c.currency)}, {age_txt}"
+        win_extra = f"{rank_txt}media {money(win.mean, c.currency)}"
     else:
         win_extra = "0 pares"
-    lines = [
-        f"Destino: {cfg.airport(c.destination)}",
-        f"Origen: {cfg.airport(c.origin)}",
+    details = [
         f"Fechas: {fdate(c.depart)} → {fdate(c.ret)} ({c.duration} días)",
-        f"Escalas: {c.stops} (máximo por tramo) · Aerolíneas: {c.airlines or 's/d'}",
+        f"Escalas: {c.stops}",
+        f"{'Aerolíneas' if len(codes) > 1 else 'Aerolínea'}: {airlines}",
         f"Precio: {money(c.price_pp, c.currency)} por persona · {money(c.price_total, c.currency)} total "
         f"({cfg.search.adults} adultos, con impuestos)",
-        _vs_line("Vs. itinerario", ev.pct_below_itinerary, itin_extra),
-        _vs_line(f"Vs. ventana {c.destination}", ev.pct_below_window, win_extra),
-        "Regla: " + " + ".join(RULE_NAMES[r] for r in ev.rules),
         f"Reserva: {c.booking_url}" if c.booking_url else "Reserva: sin link disponible",
     ]
-    if ev.robust_z is not None:
-        lines.insert(6, f"z robusto del itinerario: {ev.robust_z:.2f}")
     if c.self_transfer:
-        lines.append("⚠️ Requiere self-transfer (tramos en tickets separados).")
-    return subject, "\n".join(lines)
+        details.append("Atención: requiere self-transfer (tramos en tickets separados).")
+    stats = [
+        _vs_line("Vs. itinerario", ev.pct_below_itinerary, itin_extra),
+        _vs_line(f"Vs. ventana {c.destination}", ev.pct_below_window, win_extra),
+    ]
+    if ev.robust_z is not None:
+        stats.append(f"z robusto del itinerario: {ev.robust_z:.2f}")
+    return subject, "\n".join(details) + "\n\n" + "\n".join(stats)
 
 
 def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str]:
     if len(messages) == 1:
         return messages[0]
-    subject = f"✈️ {len(messages)} precios bajos detectados"
+    subject = f"{len(messages)} precios bajos detectados"
     body = "\n\n".join(f"{s}\n{'-' * min(len(s), 60)}\n{t}" for s, t in messages)
     return subject, body
 
@@ -164,7 +164,7 @@ def summary_message(
 
 def budget_skip_message(cfg: Config, now: dt.datetime, used: int, estimated: int) -> tuple[str, str]:
     limit = cfg.budget.max_requests_per_month
-    subject = "⚠️ Monitor de vuelos: corrida salteada por presupuesto"
+    subject = "Monitor de vuelos: corrida salteada por presupuesto"
     text = (
         f"La corrida del {now:%Y-%m-%d %H:%M} UTC necesitaba ~{estimated} requests y el acumulado del mes es "
         f"{used}. Con el tope de {limit} (max_requests_per_month) se superaría el límite, así que no se consultó "
@@ -174,11 +174,11 @@ def budget_skip_message(cfg: Config, now: dt.datetime, used: int, estimated: int
 
 
 def error_message(now: dt.datetime, detail: str, title: str = "error de la fuente") -> tuple[str, str]:
-    return f"⚠️ Monitor de vuelos: {title}", f"Corrida {now:%Y-%m-%d %H:%M} UTC.\n{detail}"
+    return f"Monitor de vuelos: {title}", f"Corrida {now:%Y-%m-%d %H:%M} UTC.\n{detail}"
 
 
 def test_message(now: dt.datetime) -> tuple[str, str]:
     return (
-        "✅ Monitor de vuelos: mensaje de prueba",
+        "Monitor de vuelos: mensaje de prueba",
         f"Si recibís esto, el canal está bien configurado ({now:%Y-%m-%d %H:%M} UTC).",
     )

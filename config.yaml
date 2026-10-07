@@ -81,3 +81,34 @@ airport_names:
   GIG: Río de Janeiro (Galeão)
   GRU: São Paulo (Guarulhos)
   CFB: Cabo Frío
+
+# Nombres para mostrar en las alertas (la API devuelve solo el código IATA de la aerolínea).
+# Si aparece un código que no está acá, se muestra el código.
+airline_names:
+  AR: Aerolíneas Argentinas
+  G3: GOL
+  LA: LATAM
+  JJ: LATAM Brasil
+  4M: LATAM Argentina
+  AD: Azul
+  FO: Flybondi
+  JA: JetSMART
+  H2: Sky Airline
+  AV: Avianca
+  CM: Copa Airlines
+  LX: Swiss
+  AC: Air Canada
+  AA: American Airlines
+  UA: United Airlines
+  DL: Delta
+  IB: Iberia
+  UX: Air Europa
+  AF: Air France
+  KL: KLM
+  LH: Lufthansa
+  AZ: ITA Airways
+  TP: TAP Air Portugal
+  ET: Ethiopian Airlines
+  EK: Emirates
+  QR: Qatar Airways
+  TK: Turkish Airlines

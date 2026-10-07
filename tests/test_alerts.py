@@ -7,7 +7,7 @@ import requests
 
 from monitor.alerts import build_notifier
 from monitor.alerts.channels import AlertError, EmailChannel, Notifier, TelegramChannel
-from monitor.alerts.format import Candidate, alert_message
+from monitor.alerts.format import Candidate, alert_message, alerts_email
 from monitor.config import Secrets
 from monitor.detection import DetectionConfig, evaluate
 from monitor.logsetup import RedactingFilter
@@ -126,8 +126,40 @@ def test_alert_message_contents(cfg):
                   booking_url="https://example.com/x")
     ev = evaluate(412, [500] * 8, [], DetectionConfig(), dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc))
     subject, text = alert_message(cfg, c, ev)
-    assert "EZE→GIG" in subject and "USD 412 por persona" in subject
-    for expected in ["Río de Janeiro (Galeão) (GIG)", "vie 15/01/2027 → lun 25/01/2027 (10 días)", "Escalas: 1",
-                     "USD 2.060 total (5 adultos", "17,6% debajo de la media", "Vs. ventana GIG: sin datos",
-                     "Regla: A (vs. historial del itinerario)", "Reserva: https://example.com/x"]:
-        assert expected in text, expected
+    assert subject == "Precio bajo EZE→GIG 15/01–25/01: USD 412 por persona"
+    details, stats = text.split("\n\n")
+    assert details.splitlines() == [
+        "Fechas: vie 15/01/2027 → lun 25/01/2027 (10 días)",
+        "Escalas: 1",
+        "Aerolíneas: Aerolíneas Argentinas, GOL",
+        "Precio: USD 412 por persona · USD 2.060 total (5 adultos, con impuestos)",
+        "Reserva: https://example.com/x",
+    ]
+    assert stats.splitlines() == [
+        "Vs. itinerario: 17,6% debajo de la media (8 obs., media USD 500)",
+        "Vs. ventana GIG: sin datos (0 pares)",
+    ]
+    for gone in ("Destino:", "Origen:", "Regla", "máximo", "antigüedad"):
+        assert gone not in text
+
+
+def test_single_unknown_airline_shows_code(cfg):
+    c = Candidate("AEP", "CFB", dt.date(2027, 1, 20), dt.date(2027, 1, 31), 0, "ZZ", 834.4, 4172.0, "USD", 1)
+    ev = evaluate(834.4, [], [], DetectionConfig(), dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc))
+    _, text = alert_message(cfg, c, ev)
+    assert "Escalas: 0\nAerolínea: ZZ\n" in text
+
+
+def test_no_emojis_in_any_message(cfg):
+    import re
+    from monitor.alerts.format import budget_skip_message, error_message, summary_message, test_message
+    now = dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc)
+    c = Candidate("EZE", "GIG", dt.date(2027, 1, 15), dt.date(2027, 1, 25), 1, "AR", 412.0, 2060.0, "USD", 1,
+                  self_transfer=True)
+    ev = evaluate(412, [500] * 8, [], DetectionConfig(), now)
+    messages = [alert_message(cfg, c, ev), alerts_email(cfg, [alert_message(cfg, c, ev)] * 2),
+                budget_skip_message(cfg, now, 100, 50), error_message(now, "x"), test_message(now),
+                summary_message(cfg, now, "full", 1, 0, 1, 0, [], [], [])]
+    emoji = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]")
+    for subject, body in messages:
+        assert not emoji.search(subject + body), subject

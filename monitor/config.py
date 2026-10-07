@@ -124,10 +124,15 @@ class Config:
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     airport_names: dict[str, str] = field(default_factory=dict)
+    airline_names: dict[str, str] = field(default_factory=dict)
 
     def airport(self, code: str) -> str:
         name = self.airport_names.get(code)
         return f"{name} ({code})" if name else code
+
+    def airline(self, code: str) -> str:
+        """Nombre de la aerolínea a partir de su código IATA; si no está cargado, el código."""
+        return self.airline_names.get(code, code)
 
 
 def _build(cls: type, data: Any, path: str) -> Any:

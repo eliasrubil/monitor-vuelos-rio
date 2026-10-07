@@ -242,7 +242,7 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     assert len(channels["telegram"].sent) == 1
     subject, text = channels["telegram"].sent[0]
     assert "GIG" in subject and "300" in subject
-    assert "A (vs. historial del itinerario)" in text and "B (vs. ventana del destino)" in text
+    assert "Vs. itinerario:" in text and "Vs. ventana GIG:" in text and "Regla" not in text
     assert "USD 1.500 total" in text and "10 días" in text
     assert "https://example.com/book/" in text
     assert len(src.link_calls) == 1               # link solo para el alertado
