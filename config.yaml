@@ -5,11 +5,10 @@
 source: ignav            # adaptador de PriceSource a usar
 
 search:
-  # Ignav no acepta códigos de ciudad/metro (BUE) en los endpoints de tarifas
-  # ("do not send city or metro codes"), por eso se consultan EZE y AEP por separado.
-  # city_code solo se usa si la fuente declara soportarlo.
-  origins: [EZE, AEP]
-  city_code: BUE
+  # BUE es el código de ciudad de Buenos Aires: una sola consulta cubre EZE y AEP (incluidas las
+  # combinaciones mixtas, p. ej. ida desde EZE y vuelta a AEP). El aeropuerto real se lee de cada tramo.
+  origins: [BUE]
+  # Río = solo GIG (no se usa el código de ciudad RIO porque incluye SDU). São Paulo = solo GRU.
   destinations: [GIG, GRU, CFB]
   # Ida y vuelta siempre al mismo destino. open_jaw: true habilitaría combinaciones
   # tipo ida GIG / vuelta CFB, pero requiere un adaptador que lo soporte (Ignav todavía no).
@@ -25,6 +24,9 @@ search:
   # Aerolíneas que nunca se consideran: se excluyen en la búsqueda (airlines_exclude de la API) y además
   # se descarta cualquier itinerario con un tramo operado por ellas. FO = Flybondi.
   airlines_exclude: [FO]
+  # Aeropuertos que nunca se consideran: se descarta cualquier itinerario que salga, llegue o haga escala en
+  # ellos. SDU = Santos Dumont (Río).
+  airports_exclude: [SDU]
 
 ignav:
   base_url: https://ignav.com/api
@@ -48,9 +50,9 @@ optimization:
   no_service_after_empty_runs: 2
   recheck_days: 14             # cada cuánto se reconsulta un par marcado no_service
   reduced_destinations: [GRU]
-  reduced_interval_days: 7
+  reduced_interval_days: 2     # GRU cada 2 días: ~1.000 requests/mes con BUE
   reduced_reference_destination: GIG
-  gru_margin_usd: 80           # GRU pasa a normal si mediana_pp(GRU) <= mediana_pp(GIG) - margen
+  gru_margin_usd: 50           # GRU pasa a normal si mediana_pp(GRU) <= mediana_pp(GIG) - margen
 
 detection:
   temporal:                    # Regla A: el itinerario contra su propio historial
@@ -79,6 +81,7 @@ database:
   path: data/prices.db
 
 airport_names:
+  BUE: Buenos Aires
   EZE: Buenos Aires (Ezeiza)
   AEP: Buenos Aires (Aeroparque)
   GIG: Río de Janeiro (Galeão)

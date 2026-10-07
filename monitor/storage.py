@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS observations (
     booking_url TEXT,
     source_ref TEXT,
     self_transfer INTEGER NOT NULL DEFAULT 0,
+    depart_airport TEXT,                -- aeropuerto real de salida (la búsqueda puede ser por ciudad: BUE)
+    return_airport TEXT,                -- aeropuerto real de llegada de la vuelta
     UNIQUE (run_id, origin, destination, depart_date, return_date)
 );
 CREATE INDEX IF NOT EXISTS idx_obs_itin ON observations(destination, depart_date, return_date);
@@ -118,19 +120,12 @@ CREATE TABLE IF NOT EXISTS migrations (
 );
 """
 
-# Corridas del 2026-10-06 y 2026-10-07 guardadas con price_is_total: false, cuando Ignav devuelve el
-# total de los 5 adultos: precio por persona y total quedaron multiplicados por 5. Se dividen una vez.
-PRICE_SCALE_FIX = "2026-10-07_price_is_total_x5"
-PRICE_SCALE_FACTOR = 5
-# Flybondi (FO) queda excluida: se borran sus observaciones y se invalida el último precio de los pares que
-# venían de ella, para que no cuente en las medias ni en el top de fechas (se reconsultan primero).
-EXCLUDE_FLYBONDI = "2026-10-08_exclude_flybondi"
-EXCLUDED_AIRLINE = "FO"
-PRICE_COLUMNS = {
-    "observations": ("price_pp", "price_total"),
-    "pair_state": ("last_price_pp", "last_price_total"),
-    "alerts": ("price_pp", "price_total"),
-}
+# Reinicio de la recolección (2026-10-08): búsqueda por BUE, precios corregidos y Flybondi/SDU excluidos.
+# Se borran los precios y estados anteriores (no comparables con los nuevos) y se conservan runs y requests,
+# para que el tope mensual siga contando lo ya consumido. La base anterior queda en el historial de git.
+RESET_MIGRATION = "2026-10-08_reset_bue"
+RESET_TABLES = ("observations", "pair_state", "dest_state", "alerts")
+NEW_COLUMNS = {"observations": {"depart_airport": "TEXT", "return_airport": "TEXT"}}
 
 
 def iso(ts: dt.datetime) -> str:
@@ -183,38 +178,20 @@ class Store:
         self._migrate()
 
     def _migrate(self) -> None:
-        for name, fn in ((PRICE_SCALE_FIX, self._rescale_prices), (EXCLUDE_FLYBONDI, self._drop_flybondi)):
-            if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (name,)).fetchone():
-                continue
-            counts = fn()
-            detail = ", ".join(f"{k}={v}" for k, v in counts.items())
-            self.conn.execute("INSERT INTO migrations (name, applied_at, detail) VALUES (?, ?, ?)",
-                              (name, iso(dt.datetime.now(dt.timezone.utc)), detail))
-            self.conn.commit()
-            if any(counts.values()):
-                log.warning("Migración %s aplicada: %s", name, detail)
-
-    def _rescale_prices(self) -> dict[str, int]:
-        counts = {}
-        for table, cols in PRICE_COLUMNS.items():
-            sets = ", ".join(f"{c} = ROUND({c} / {PRICE_SCALE_FACTOR}.0, 2)" for c in cols)
-            counts[table] = self.conn.execute(f"UPDATE {table} SET {sets} WHERE {cols[0]} IS NOT NULL").rowcount
-        return counts
-
-    def _drop_flybondi(self) -> dict[str, int]:
-        rows = [r for r in self.conn.execute(
-                    "SELECT id, origin, destination, depart_date, return_date, ts_utc, airlines FROM observations")
-                if EXCLUDED_AIRLINE in {a.strip() for a in (r["airlines"] or "").split(",")}]
-        self.conn.executemany("DELETE FROM observations WHERE id = ?", [(r["id"],) for r in rows])
-        # Pares cuyo último precio era esa observación: sin precio y "nunca consultados" (se reconsultan primero).
-        reset = 0
-        for r in rows:
-            reset += self.conn.execute(
-                """UPDATE pair_state SET last_price_pp = NULL, last_price_total = NULL, last_queried_seq = NULL
-                   WHERE origin = ? AND destination = ? AND depart_date = ? AND return_date = ?
-                     AND last_price_at = ?""",
-                (r["origin"], r["destination"], r["depart_date"], r["return_date"], r["ts_utc"])).rowcount
-        return {"observations_borradas": len(rows), "pair_state_reseteados": reset}
+        for table, cols in NEW_COLUMNS.items():
+            existing = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col, ctype in cols.items():
+                if col not in existing:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ctype}")
+        if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (RESET_MIGRATION,)).fetchone():
+            return
+        counts = {t: self.conn.execute(f"DELETE FROM {t}").rowcount for t in RESET_TABLES}
+        detail = ", ".join(f"{t}={n}" for t, n in counts.items())
+        self.conn.execute("INSERT INTO migrations (name, applied_at, detail) VALUES (?, ?, ?)",
+                          (RESET_MIGRATION, iso(dt.datetime.now(dt.timezone.utc)), detail))
+        self.conn.commit()
+        if any(counts.values()):
+            log.warning("Base reiniciada (%s): %s borrados; runs y requests se conservan", RESET_MIGRATION, detail)
 
     # ----------------------------------------------------------- apertura
     @classmethod
@@ -305,12 +282,13 @@ class Store:
         cur = self.conn.execute(
             """INSERT INTO observations (run_id, ts_utc, source, origin, destination, depart_date, return_date,
                    duration_days, stops, airlines, price_total, price_pp, currency, booking_url, source_ref,
-                   self_transfer)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   self_transfer, depart_airport, return_airport)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id, iso(now), source, origin, destination, depart.isoformat(), ret.isoformat(),
                 (ret - depart).days, quote.stops, ",".join(quote.airlines), quote.price_total, quote.price_pp,
                 quote.currency, quote.booking_url, quote.source_ref, int(quote.self_transfer),
+                quote.depart_airport, quote.return_airport,
             ),
         )
         return int(cur.lastrowid)

@@ -32,7 +32,6 @@ class SearchConfig:
     departure_from: dt.date
     return_until: dt.date
     durations: list[int]
-    city_code: Optional[str] = None
     open_jaw: bool = False
     adults: int = 5
     max_stops: int = 1
@@ -40,6 +39,7 @@ class SearchConfig:
     market: str = "US"
     currency: str = "USD"
     airlines_exclude: list[str] = field(default_factory=list)
+    airports_exclude: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -189,11 +189,14 @@ def _validate(cfg: Config) -> Config:
     s.airlines_exclude = [c.upper() for c in s.airlines_exclude]
     if any(len(c) != 2 for c in s.airlines_exclude):
         raise ConfigError("search.airlines_exclude: usar códigos IATA de aerolínea de 2 caracteres")
+    s.airports_exclude = [c.upper() for c in s.airports_exclude]
     s.origins = [c.upper() for c in s.origins]
     s.destinations = [c.upper() for c in s.destinations]
     for code in [*s.origins, *s.destinations]:
         if len(code) != 3 or not code.isalpha():
             raise ConfigError(f"Código IATA inválido: {code!r}")
+    if set(s.airports_exclude) & set(s.origins + s.destinations):
+        raise ConfigError("search.airports_exclude no puede incluir orígenes ni destinos de la búsqueda")
     if not s.origins or not s.destinations:
         raise ConfigError("search.origins y search.destinations no pueden estar vacíos")
     if s.return_until < s.departure_from:

@@ -174,3 +174,10 @@ def test_alert_message_with_per_leg_links_and_same_price(cfg):
     _, text = alert_message(cfg, c, ev)
     assert "Hay 1 fecha más con el mismo precio." in text
     assert "Reserva Ida: sin link disponible\nReserva Vuelta: https://v" in text
+
+
+def test_messages_use_argentina_time(cfg):
+    from monitor.alerts.format import error_message, summary_message, test_message
+    now = dt.datetime(2026, 10, 7, 13, 15, tzinfo=dt.timezone.utc)
+    for _, body in (test_message(now), error_message(now, "x"), summary_message(cfg, now, "full", 1, 0, 1, 0, [], [], [])):
+        assert "07/10/2026 10:15 hora argentina" in body and "UTC" not in body

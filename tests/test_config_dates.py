@@ -10,7 +10,9 @@ from .conftest import ROOT, make_config
 
 def test_repo_config_loads():
     cfg = load_config(ROOT / "config.yaml")
-    assert cfg.search.origins == ["EZE", "AEP"]
+    assert cfg.search.origins == ["BUE"]
+    assert cfg.search.airports_exclude == ["SDU"] and cfg.search.airlines_exclude == ["FO"]
+    assert cfg.optimization.gru_margin_usd == 50
     assert cfg.search.destinations == ["GIG", "GRU", "CFB"]
     assert cfg.search.open_jaw is False
     assert cfg.budget.max_requests_per_month == 2500
@@ -44,3 +46,9 @@ def test_secrets_from_env():
     assert s.ignav_api_key == "k" * 10
     assert s.telegram_chat_id == "123"
     assert s.values() == ["k" * 10, "123"]
+
+
+def test_excluded_airport_cannot_be_a_destination(raw_config):
+    raw_config["search"]["destinations"] = ["GIG", "SDU"]
+    with pytest.raises(ConfigError, match="airports_exclude"):
+        make_config(raw_config)

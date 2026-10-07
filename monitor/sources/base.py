@@ -24,6 +24,7 @@ class SearchQuery:
     market: str
     currency: str
     airlines_exclude: tuple[str, ...] = ()
+    airports_exclude: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class Quote:
     source_ref: Optional[str] = None      # id opaco de la fuente para pedir el link de reserva
     booking_url: Optional[str] = None
     self_transfer: bool = False
+    depart_airport: Optional[str] = None  # aeropuerto real de salida de la ida (p. ej. EZE cuando se busca BUE)
+    return_airport: Optional[str] = None  # aeropuerto real de llegada de la vuelta
 
 
 @dataclass
@@ -72,7 +75,6 @@ class PriceSource(ABC):
     los errores se devuelven en el resultado, nunca se propagan como excepción."""
 
     name: str = "base"
-    supports_city_codes: bool = False
     supports_open_jaw: bool = False
 
     @abstractmethod
@@ -93,3 +95,6 @@ class Itinerary:
     airlines: tuple[str, ...] = field(default_factory=tuple)
     source_ref: Optional[str] = None
     self_transfer: bool = False
+    airports: tuple[str, ...] = field(default_factory=tuple)   # todos los aeropuertos de todos los tramos
+    depart_airport: Optional[str] = None
+    return_airport: Optional[str] = None
