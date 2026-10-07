@@ -192,6 +192,7 @@ def test_demo_sends_one_telegram_and_one_email(cfg):
     assert delivered == ["telegram", "email"]
     assert len(tg.sent) == 1 and len(mail.sent) == 1
     text = tg.sent[0][1]
-    assert text.startswith("[PRUEBA - valores simulados]\nEZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona")
+    assert text.startswith("[PRUEBA - valores simulados]\nEZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona "
+                           "(+2 fechas más con el mismo precio) - JetSMART\n")
     assert "AEP/EZE --> CFB" in text and "Reserva Ida:" in text and "EZE --> GRU" in text
     assert mail.sent[0][0].startswith("[PRUEBA - valores simulados] 3 precios bajos")

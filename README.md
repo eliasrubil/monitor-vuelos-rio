@@ -78,9 +78,9 @@ optimización se hace eligiendo qué pares consultar.
 el límite de caracteres de Telegram se parte en varios mensajes, sin cortar ninguna alerta):
 
 ```
-AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona
+AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona - Aerolíneas Argentinas
 Reserva: https://...
-EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio)
+EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio) - JetSMART
 Reserva Ida: https://...
 Reserva Vuelta: https://...
 ```

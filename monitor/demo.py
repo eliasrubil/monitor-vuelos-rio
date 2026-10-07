@@ -47,7 +47,7 @@ def send_demo(cfg: Config, notifier: Notifier, now: dt.datetime) -> list[str]:
     """Un único mensaje de Telegram y un único email, con el mismo formato que una corrida real."""
     alerts = demo_alerts(cfg, now)
     delivered = []
-    for text, _ in telegram_alert_chunks([c for c, _ in alerts]):
+    for text, _ in telegram_alert_chunks(cfg, [c for c, _ in alerts]):
         delivered += notifier.send("", f"{DEMO_PREFIX}\n{text}", only={"telegram"})
     subject, body = alerts_email(cfg, [alert_message(cfg, c, ev) for c, ev in alerts])
     delivered += notifier.send(f"{DEMO_PREFIX} {subject}", body, only={"email"})
