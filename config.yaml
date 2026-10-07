@@ -61,7 +61,7 @@ detection:
     min_observations: 7
     mad_scale: 1.4826          # z robusto = (precio - mediana) / (mad_scale * MAD)
   cross:                       # Regla B: contra los demás pares del mismo destino
-    percentile: 0.08           # el itinerario tiene que estar en el 8% más barato de su destino
+    max_rank: 3                # solo las 3 fechas más baratas del destino pueden alertar
     drop_pct: 0.15
     min_pairs: 10
   absolute_threshold_usd_pp: null   # Regla C: desactivada mientras sea null

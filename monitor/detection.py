@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import math
 import statistics
 from dataclasses import dataclass, field
 from typing import Optional
@@ -98,9 +97,8 @@ def evaluate(
         ages = [max((now - p.price_at).days, 0) for p in window]
         ev.window_age_days = (min(ages), max(ages))
     if ev.window_stats and ev.window_stats.n >= c.min_pairs:
-        n = ev.window_stats.n
         ev.window_rank = 1 + sum(1 for p in prices if p < price_pp)
-        ev.window_cutoff = max(1, math.ceil(round(c.percentile * n, 9)))
+        ev.window_cutoff = c.max_rank
         in_bottom = ev.window_rank <= ev.window_cutoff
         if in_bottom and pct_below(price_pp, ev.window_stats.mean) >= c.drop_pct:
             ev.rules.append(RULE_CROSS)

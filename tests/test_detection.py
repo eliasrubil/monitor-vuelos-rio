@@ -57,12 +57,13 @@ def test_rule_b_requires_drop_vs_mean():
     assert ev.rules == []
 
 
-def test_rule_b_requires_bottom_percentile():
-    # 5 precios muy bajos: el cuarto no está en el 10% (cutoff = ceil(0.1*25) = 3)
-    prices = [50, 51, 52, 53, 54] + [200] * 20
-    ev = evaluate(53, [], window(prices), DetectionConfig(), NOW)
-    assert ev.window_rank == 4 and ev.window_cutoff == 3
-    assert ev.rules == []
+def test_rule_b_only_top_3():
+    # 39 fechas (un destino completo): solo las 3 más baratas pueden alertar.
+    prices = [50, 51, 52, 53, 54] + [200] * 34
+    third = evaluate(52, [], window(prices), DetectionConfig(), NOW)
+    fourth = evaluate(53, [], window(prices), DetectionConfig(), NOW)
+    assert (third.window_rank, third.rules) == (3, ["B"])
+    assert (fourth.window_rank, fourth.window_cutoff, fourth.rules) == (4, 3, [])
 
 
 def test_rule_c_absolute_threshold():
