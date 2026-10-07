@@ -34,13 +34,13 @@ def db(cfg):
 def test_first_run_is_full_scan(cfg, notifier, channels, clock):
     src = FakeSource(constant_prices())
     assert run_once(cfg, src, notifier, clock) == 0
-    assert len(src.calls) == 39 * 3 * 2
+    assert len(src.calls) == 39 * 3        # BUE cubre EZE y AEP en una consulta
     conn = db(cfg)
     run = conn.execute("SELECT * FROM runs").fetchone()
     assert run["mode"] == "full" and run["status"] == "ok"
-    assert run["executed_queries"] == 234 and run["saved_queries"] == 0
-    assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 234
-    assert conn.execute("SELECT COUNT(*) FROM requests WHERE billable = 1").fetchone()[0] == 234
+    assert run["executed_queries"] == 117 and run["saved_queries"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 117
+    assert conn.execute("SELECT COUNT(*) FROM requests WHERE billable = 1").fetchone()[0] == 117
     obs = conn.execute("SELECT * FROM observations LIMIT 1").fetchone()
     assert obs["price_total"] == obs["price_pp"] * 5
     assert obs["duration_days"] == 9 and obs["currency"] == "USD" and obs["airlines"] == "AR,G3"
@@ -60,10 +60,10 @@ def test_incremental_run_selects_top_rotating_and_skips_reduced_gru(cfg, notifie
     # GRU en modo reducido (su mediana no es <= GIG - 80) y consultado hace 1 día -> salteado
     assert set(per_dest) == {"GIG", "CFB"}
     assert len(per_dest["GIG"]) == 8 + 5
-    assert len(src.calls) == 2 * 13 * 2
+    assert len(src.calls) == 2 * 13
     run = db(cfg).execute("SELECT * FROM runs ORDER BY id DESC").fetchone()
     assert run["mode"] == "incremental"
-    assert run["saved_queries"] == 234 - 52
+    assert run["saved_queries"] == 117 - 26
 
 
 def test_top_k_are_the_cheapest_pairs(cfg, notifier, clock):
@@ -86,7 +86,7 @@ def test_staleness_guarantee(cfg, notifier, clock):
         src = FakeSource(constant_prices())
         run_once(cfg, src, notifier, clock)
         for q in src.calls:
-            if q.destination != "GIG" or q.origin != "EZE":
+            if q.destination != "GIG":
                 continue
             key = (q.depart, q.ret)
             if key in last_seen:
@@ -100,8 +100,10 @@ def test_staleness_guarantee(cfg, notifier, clock):
 
 
 def test_no_service_after_two_empty_runs_and_recheck(raw_config, tmp_path, notifier, clock):
+    # Con varios orígenes por separado, no_service se lleva por origen.
     cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")},
-                      search={"destinations": ["GIG"]}, optimization={"top_k": 39, "rotating_k": 0})
+                      search={"origins": ["EZE", "AEP"], "destinations": ["GIG"]},
+                      optimization={"top_k": 39, "rotating_k": 0})
     dead = (dt.date(2027, 1, 14), dt.date(2027, 1, 23))
     base = constant_prices()
 
@@ -141,17 +143,19 @@ def test_gru_reduced_cadence_and_promotion(raw_config, tmp_path, notifier, clock
         run_once(cfg, src, notifier, clock)
         if any(q.destination == "GRU" for q in src.calls):
             gru_runs.append(day)
-    assert gru_runs == [7, 14]
+    assert gru_runs == [2, 4, 6, 8, 10, 12, 14]          # reduced_interval_days: 2
 
-    # Si GRU se vuelve >= 80 USD más barato que GIG, pasa a seguimiento normal.
-    cheap_gru = constant_prices({"GIG": 400.0, "CFB": 450.0, "GRU": 250.0})
-    clock.advance(7)
-    run_once(cfg, FakeSource(cheap_gru), notifier, clock, full_scan=True)
-    clock.advance()
-    src = FakeSource(cheap_gru)
-    run_once(cfg, src, notifier, clock)
-    assert any(q.destination == "GRU" for q in src.calls)
-    assert db(cfg).execute("SELECT mode FROM dest_state WHERE destination='GRU'").fetchone()[0] == "normal"
+    def gru_mode_after(gru_price):
+        clock.advance(7)
+        prices = constant_prices({"GIG": 400.0, "CFB": 450.0, "GRU": gru_price})
+        run_once(cfg, FakeSource(prices), notifier, clock, full_scan=True)
+        clock.advance()
+        run_once(cfg, FakeSource(prices), notifier, clock)
+        return db(cfg).execute("SELECT mode FROM dest_state WHERE destination='GRU'").fetchone()[0]
+
+    # Margen de 50 USD: GRU 40 más barato que GIG sigue reducido; 60 más barato pasa a normal.
+    assert gru_mode_after(360.0) == "reduced"
+    assert gru_mode_after(340.0) == "normal"
 
 
 def test_budget_exceeded_skips_run_and_notifies(raw_config, tmp_path, notifier, channels, clock):
@@ -192,11 +196,11 @@ def test_dry_run_is_limited_and_counts_usage_without_writing_prices(cfg, notifie
 
 
 def test_dry_run_requests_count_towards_monthly_budget(raw_config, tmp_path, notifier, clock):
-    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, budget={"max_requests_per_month": 237})
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, budget={"max_requests_per_month": 120})
     for _ in range(2):
         run_once(cfg, FakeSource(constant_prices()), LogNotifier(), clock, dry_run=True)
     src = FakeSource(constant_prices())
-    run_once(cfg, src, notifier, clock)       # 8 + 234 > 237: la línea base no entra
+    run_once(cfg, src, notifier, clock)       # 8 + 117 > 120: la línea base no entra
     assert src.calls == []
 
 
@@ -237,13 +241,13 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     channels["telegram"].sent.clear()
     channels["email"].sent.clear()
 
-    src = FakeSource(drop_for(pair, 300))
+    src = FakeSource(drop_for(pair, 300), airports_fn=lambda q: ("EZE", "EZE"))
     run_once(cfg, src, notifier, clock, full_scan=True)
     assert len(channels["telegram"].sent) == 1
     subject, text = channels["telegram"].sent[0]
     assert subject == ""
     assert text.splitlines() == ["EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona",
-                                 "Reserva: https://example.com/book/EZE-GIG-2027-01-20-2027-01-30"]
+                                 "Reserva: https://example.com/book/BUE-GIG-2027-01-20-2027-01-30"]
     assert len(src.link_calls) == 1               # link solo para el alertado
     # email: una alerta (formato completo) + resumen
     assert len(channels["email"].sent) == 2
@@ -280,10 +284,10 @@ def test_errors_do_not_stop_the_run(cfg, notifier, clock):
     base = constant_prices()
     src = FakeSource(lambda q: "error" if q.destination == "CFB" else base(q))
     assert run_once(cfg, src, notifier, clock) == 0
-    assert len(src.calls) == 234
+    assert len(src.calls) == 117
     conn = db(cfg)
     assert conn.execute("SELECT status FROM runs").fetchone()[0] == "partial"
-    assert conn.execute("SELECT COUNT(*) FROM requests WHERE status='error'").fetchone()[0] == 78
+    assert conn.execute("SELECT COUNT(*) FROM requests WHERE status='error'").fetchone()[0] == 39
     # los pares con error no se marcan como consultados: van primero en la próxima rotación
     assert conn.execute("SELECT COUNT(*) FROM pair_state WHERE destination='CFB'").fetchone()[0] == 0
 
@@ -311,14 +315,14 @@ def test_same_price_dates_alert_once_and_are_all_recorded(big_cfg, notifier, cha
     tied = {(dt.date(2027, 1, d), dt.date(2027, 1, d + 10)) for d in (16, 18, 20)}
 
     def prices(q):
-        if q.destination == "GIG" and q.origin == "EZE" and (q.depart, q.ret) in tied:
+        if q.destination == "GIG" and (q.depart, q.ret) in tied:
             return 250
         return base(q)
 
-    src = FakeSource(prices)
+    src = FakeSource(prices, airports_fn=lambda q: ("EZE", "AEP"))   # ida desde EZE, vuelta a AEP
     run_once(cfg, src, notifier, clock, full_scan=True)
     (_, text), = channels["telegram"].sent
-    assert text.splitlines()[0] == ("EZE --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
+    assert text.splitlines()[0] == ("EZE/AEP --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
                                     "(+2 fechas más con el mismo precio)")
     assert "18/01" not in text and "20/01" not in text
     assert len(src.link_calls) == 1                       # link solo para la primera

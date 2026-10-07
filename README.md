@@ -40,9 +40,13 @@ config.yaml ─┐
   (qué consultar)  (timeouts, reintentos)        (+ anti-spam)            (+ resumen por email)
 ```
 
-**Orígenes.** Ignav no acepta códigos de ciudad (`BUE`): su documentación indica usar códigos de aeropuerto.
-Por eso cada par de fechas se consulta desde **EZE y AEP por separado**, y para cada itinerario
-(destino + fechas) se toma el más barato de los dos.
+**Origen y destinos.** El origen es `BUE`, el código de ciudad de Buenos Aires: una sola consulta cubre EZE
+y AEP, incluidas las combinaciones mixtas (ida desde EZE, vuelta a AEP). El aeropuerto real se lee de cada
+tramo (`departure_airport` / `arrival_airport`) y se muestra en las alertas (`EZE`, `AEP` o `EZE/AEP` si ida
+y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB**: para Río se usa solo GIG
+(no el código de ciudad `RIO`, que incluye Santos Dumont) y para São Paulo solo GRU.
+`search.airports_exclude: [SDU]` descarta cualquier itinerario que salga, llegue o haga escala en Santos
+Dumont.
 
 **Optimización de consultas** (por destino):
 
@@ -52,7 +56,7 @@ Por eso cada par de fechas se consulta desde **EZE y AEP por separado**, y para 
 | Corridas siguientes | `top_k` (8) pares más baratos + `rotating_k` (5) del resto, el dato más viejo primero |
 | Garantía de frescura | Si un par llegaría a `max_staleness_runs` (6) corridas sin actualizar, se agrega igual |
 | `no_service` | Una consulta que dio "sin resultados" 2 corridas seguidas se marca `no_service` y se reconsulta cada `recheck_days` (14) |
-| GRU (modo reducido) | Se consulta cada `reduced_interval_days` (7). Pasa a seguimiento normal si su mediana por persona ≤ mediana de GIG − `gru_margin_usd` (80); si deja de cumplirlo, vuelve a reducido |
+| GRU (modo reducido) | Se consulta cada `reduced_interval_days` (2). Pasa a seguimiento normal si su mediana por persona ≤ mediana de GIG − `gru_margin_usd` (50); si deja de cumplirlo, vuelve a reducido |
 
 Ignav no ofrece búsqueda por calendario ni fechas flexibles (cada consulta es un par de fechas), así que la
 optimización se hace eligiendo qué pares consultar.
@@ -203,7 +207,7 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   los mensajes en el log, pero **no guarda precios ni envía alertas**. Como Ignav cobra esas requests,
   **se suman al contador de uso del mes**: el workflow registra la corrida (`runs.mode = 'dry_run'`) y las
   requests en la base, y la commitea.
-- **full_scan:** barrido completo de todas las combinaciones (234 requests).
+- **full_scan:** barrido completo de todas las combinaciones (117 requests).
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
 cuando un itinerario acumula 7 observaciones.
@@ -279,15 +283,14 @@ Con la configuración actual (medido con una simulación de 30 días):
 
 | Corrida | Requests |
 |---|---|
-| Barrido inicial (39 pares × 3 destinos × 2 orígenes) | 234 |
-| Día normal (GIG + CFB: 13 pares × 2 orígenes c/u) | 52 (54 si se fuerza un par viejo) |
-| Día en que toca GRU (cada 7 días) | 78 |
+| Barrido inicial (39 pares × 3 destinos, origen BUE) | 117 |
+| Día normal (GIG + CFB: 13 pares c/u) | 26 (27 si se fuerza un par viejo) |
+| Día en que toca GRU (cada 2 días) | ~40 |
 | Links de reserva | 1 por alerta |
 | Dry run manual | hasta 4 |
-| **Mes típico** | **~1.700** (el primer mes ~1.910 con el barrido; margen de ~600 hasta el tope) |
+| **Mes típico** | **~980** (el primer mes ~1.100 con el barrido) |
 
-Costo: de octubre 2026 al 10/01/2027 son ~5.700 requests. Restando las 1.000 gratis, quedan
-**~USD 9–10 en total, ~USD 3,5 por mes**.
+Costo: ~USD 2 por mes (USD 2 cada 1.000 requests).
 
 ---
 
@@ -308,7 +311,7 @@ Costo: de octubre 2026 al 10/01/2027 son ~5.700 requests. Restando las 1.000 gra
 Consultas útiles:
 
 ```sql
--- Últimos precios por itinerario (mínimo entre EZE y AEP)
+-- Últimos precios por itinerario
 SELECT destination, depart_date, return_date, MIN(last_price_pp) AS pp, MAX(last_price_at) AS fecha
 FROM pair_state WHERE no_service = 0 AND last_price_pp IS NOT NULL
 GROUP BY destination, depart_date, return_date ORDER BY pp LIMIT 20;
@@ -320,15 +323,18 @@ SELECT COUNT(*) FROM requests WHERE billable = 1 AND substr(ts_utc, 1, 7) = strf
 Si un par deja de devolver resultados, su último precio se borra de `pair_state` (deja de estar vigente),
 aunque su historial queda en `observations`.
 
+**Reinicio del 08/10/2026.** Al pasar a BUE se borraron los precios, estados y alertas anteriores (precios
+corregidos a mano, tarifas de Flybondi y combinaciones EZE/AEP que ya no se usan) y se conservaron `runs` y
+`requests`, para que el tope mensual siga contando lo consumido. La base anterior queda en el historial de git.
+
 ---
 
 ## Limitaciones conocidas de la API
 
 Según la documentación de Ignav:
 
-- **Sin códigos de ciudad:** `BUE` no se acepta, por eso se consulta EZE y AEP por separado. El adaptador
-  declara `supports_city_codes = False`. Si una fuente futura lo soporta, se usa `search.city_code`
-  automáticamente.
+- **Códigos de ciudad:** la búsqueda acepta códigos de ciudad (`BUE`, `RIO`, `SAO`); la respuesta conserva el
+  código pedido y cada tramo trae el aeropuerto real.
 - **Sin calendario ni fechas flexibles:** cada request es un par de fechas.
 - **Open-jaw:** Ignav tiene `POST /api/fares/search` (1 o 2 tramos con distintos aeropuertos), pero su
   esquema todavía no fue verificado, así que el adaptador no lo usa (`supports_open_jaw = False`).

@@ -178,3 +178,38 @@ def test_excluded_airlines_are_sent_and_filtered():
     out = src.search_round_trip(q)
     assert http.calls[0]["json"]["airlines_exclude"] == ["G3"]
     assert out.quote.source_ref == "aaa111" and out.quote.airlines == ("AR",)
+
+
+def _with_airports(body):
+    """Agrega departure_airport/arrival_airport a los segmentos del fixture (BUE→GIG)."""
+    routes = {
+        "aaa111": [[("AEP", "GIG")], [("GIG", "AEP")]],
+        "bbb222": [[("EZE", "GRU"), ("GRU", "GIG")], [("GIG", "GRU"), ("GRU", "AEP")]],
+        "ccc333": [[("EZE", "SCL"), ("SCL", "GRU"), ("GRU", "GIG")], [("GIG", "EZE")]],
+    }
+    for it in body["itineraries"]:
+        for leg, hops in zip(("outbound", "inbound"), routes[it["ignav_id"]]):
+            for seg, (dep, arr) in zip(it[leg]["segments"], hops):
+                seg["departure_airport"], seg["arrival_airport"] = dep, arr
+    return body
+
+
+def test_city_code_search_reports_real_airports():
+    src, http, _ = make_source([FakeResponse(200, _with_airports(load_fixture("ignav_round_trip.json")))])
+    q = SearchQuery("BUE", "GIG", dt.date(2027, 1, 15), dt.date(2027, 1, 25), adults=5, max_stops=1,
+                    cabin_class="economy", market="US", currency="USD")
+    out = src.search_round_trip(q)
+    assert http.calls[0]["json"]["origin"] == "BUE"
+    assert out.quote.source_ref == "bbb222"
+    assert (out.quote.depart_airport, out.quote.return_airport) == ("EZE", "AEP")
+
+
+def test_excluded_airport_discards_itineraries_through_it():
+    body = _with_airports(load_fixture("ignav_round_trip.json"))
+    # bbb222 (la más barata) pasa a hacer escala en SDU en la vuelta: se descarta y queda aaa111.
+    body["itineraries"][1]["inbound"]["segments"][0]["arrival_airport"] = "SDU"
+    src, _, _ = make_source([FakeResponse(200, body)])
+    q = SearchQuery("BUE", "GIG", dt.date(2027, 1, 15), dt.date(2027, 1, 25), adults=5, max_stops=1,
+                    cabin_class="economy", market="US", currency="USD", airports_exclude=("SDU",))
+    out = src.search_round_trip(q)
+    assert out.quote.source_ref == "aaa111"

@@ -40,7 +40,6 @@ FATAL_STATUSES = {401, 402, 403}
 
 class IgnavSource(PriceSource):
     name = "ignav"
-    supports_city_codes = False   # la doc indica no enviar códigos de ciudad/metro
     supports_open_jaw = False     # POST /fares/search existe pero su esquema no está verificado
 
     def __init__(
@@ -128,6 +127,8 @@ class IgnavSource(PriceSource):
                 continue
             if set(c.airlines) & set(query.airlines_exclude):
                 continue
+            if set(c.airports) & set(query.airports_exclude):
+                continue
             if c.currency != query.currency:
                 if c.currency not in self._currency_warned:
                     log.warning("Ignav devolvió moneda %s (se esperaba %s); se descarta", c.currency, query.currency)
@@ -149,6 +150,8 @@ class IgnavSource(PriceSource):
             airlines=best.airlines,
             source_ref=best.source_ref,
             self_transfer=best.self_transfer,
+            depart_airport=best.depart_airport,
+            return_airport=best.return_airport,
         )
         return SearchOutcome(STATUS_OK, quote=quote, http_status=status, attempts=attempts, billable=True)
 
@@ -163,6 +166,7 @@ class IgnavSource(PriceSource):
             return None
         stops = 0
         airlines: list[str] = []
+        airports: list[str] = []
         for leg in legs:
             segments = leg.get("segments") or []
             stops = max(stops, max(len(segments) - 1, 0))
@@ -170,6 +174,9 @@ class IgnavSource(PriceSource):
                 code = seg.get("marketing_carrier_code")
                 if code and code not in airlines:
                     airlines.append(code)
+                for key in ("departure_airport", "arrival_airport"):
+                    if seg.get(key) and seg[key] not in airports:
+                        airports.append(seg[key])
             if not segments and leg.get("carrier") and leg["carrier"] not in airlines:
                 airlines.append(leg["carrier"])
         return Itinerary(
@@ -179,6 +186,9 @@ class IgnavSource(PriceSource):
             airlines=tuple(airlines),
             source_ref=it.get("ignav_id"),
             self_transfer=bool(it.get("requires_self_transfer", False)),
+            airports=tuple(airports),
+            depart_airport=_first_segment(it.get("outbound"), "departure_airport", first=True),
+            return_airport=_first_segment(it.get("inbound"), "arrival_airport", first=False),
         )
 
     # ---------------------------------------------------------------- reserva
@@ -190,6 +200,14 @@ class IgnavSource(PriceSource):
         links = pick_booking_links(data.get("booking_options") or [])
         return LinkOutcome(links=links, http_status=status, attempts=attempts, billable=True,
                            error=None if links else "sin links de reserva")
+
+
+def _first_segment(leg: Optional[dict], key: str, first: bool) -> Optional[str]:
+    """Aeropuerto de salida del primer tramo (first=True) o de llegada del último (first=False)."""
+    segments = (leg or {}).get("segments") or []
+    if not segments:
+        return None
+    return segments[0 if first else -1].get(key)
 
 
 def pick_booking_links(options: list[dict]) -> list[tuple[str, Optional[str]]]:

@@ -35,6 +35,16 @@ class Candidate:
     booking_links: list[tuple[str, Optional[str]]] = field(default_factory=list)
     # Cuántas otras fechas del mismo origen y destino alertaron en esta corrida con el mismo precio.
     same_price_count: int = 0
+    depart_airport: Optional[str] = None   # aeropuerto real de salida (la búsqueda puede ser BUE)
+    return_airport: Optional[str] = None   # aeropuerto real de llegada de la vuelta
+
+    @property
+    def shown_origin(self) -> str:
+        """EZE o AEP si ida y vuelta usan el mismo; "EZE/AEP" (salida/llegada) si son distintos."""
+        dep, ret = self.depart_airport, self.return_airport
+        if dep and ret and dep != ret:
+            return f"{dep}/{ret}"
+        return dep or ret or self.origin
 
     @property
     def duration(self) -> int:
@@ -74,7 +84,7 @@ def _vs_line(label: str, below: Optional[float], extra: str) -> str:
 
 def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     subject = (
-        f"Precio bajo {c.origin}→{c.destination} {c.depart:%d/%m}–{c.ret:%d/%m}: "
+        f"Precio bajo {c.shown_origin}→{c.destination} {c.depart:%d/%m}–{c.ret:%d/%m}: "
         f"{money(c.price_pp, c.currency)} por persona"
     )
     codes = [a.strip() for a in c.airlines.split(",") if a.strip()]
@@ -118,7 +128,7 @@ def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str
 
 def telegram_alert_entry(c: Candidate) -> str:
     amount = f"{c.price_pp:,.0f}".replace(",", ".")
-    line = (f"{c.origin} --> {c.destination} {c.depart:%d/%m} al {c.ret:%d/%m} ({c.duration} días) - "
+    line = (f"{c.shown_origin} --> {c.destination} {c.depart:%d/%m} al {c.ret:%d/%m} ({c.duration} días) - "
             f"{amount}{c.currency} por persona")
     if c.same_price_count:
         line += f" (+{same_price_text(c)})"

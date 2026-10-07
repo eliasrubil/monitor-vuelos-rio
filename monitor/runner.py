@@ -69,8 +69,6 @@ class Runner:
                      "guardan precios ni se envían alertas.")
 
         origins = cfg.search.origins
-        if self.source.supports_city_codes and cfg.search.city_code:
-            origins = [cfg.search.city_code]
         if cfg.search.open_jaw and not self.source.supports_open_jaw:
             log.warning("open_jaw: true, pero la fuente %s no lo soporta; se consultan solo ida y vuelta.",
                         self.source.name)
@@ -189,7 +187,7 @@ class Runner:
     def _search_query(self, q: PlannedQuery) -> SearchQuery:
         s = self.cfg.search
         return SearchQuery(q.origin, q.destination, q.depart, q.ret, s.adults, s.max_stops, s.cabin_class,
-                           s.market, s.currency, tuple(s.airlines_exclude))
+                           s.market, s.currency, tuple(s.airlines_exclude), tuple(s.airports_exclude))
 
     def _apply_outcome(self, run_id: int, q: PlannedQuery, outcome: SearchOutcome, seq: int) -> None:
         if outcome.status not in (STATUS_OK, STATUS_NO_RESULTS):
@@ -208,7 +206,9 @@ class Runner:
                 log.info("%s→%s %s/%s: vuelve a tener servicio", q.origin, q.destination, q.depart, q.ret)
             st.last_price_pp, st.last_price_total, st.last_price_at = quote.price_pp, quote.price_total, ts
             st.empty_streak, st.no_service, st.no_service_since = 0, False, None
-            log.debug("%s→%s %s/%s: %.0f pp", q.origin, q.destination, q.depart, q.ret, quote.price_pp)
+            log.info("%s→%s %s/%s: %.0f pp (%s, %s→ / →%s, %d escala/s)", q.origin, q.destination, q.depart, q.ret,
+                     quote.price_pp, ",".join(quote.airlines) or "s/d", quote.depart_airport or "?",
+                     quote.return_airport or "?", quote.stops)
         else:
             # Sin resultados: el último precio deja de ser vigente.
             st.last_price_pp = st.last_price_total = None
@@ -231,6 +231,7 @@ class Runner:
                 stops=r["stops"], airlines=r["airlines"].replace(",", ", "), price_pp=r["price_pp"],
                 price_total=r["price_total"], currency=r["currency"], observation_id=r["id"],
                 source_ref=r["source_ref"], booking_url=r["booking_url"], self_transfer=bool(r["self_transfer"]),
+                depart_airport=r["depart_airport"], return_airport=r["return_airport"],
             )
         return [best[k] for k in sorted(best)]
 
