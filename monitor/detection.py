@@ -14,11 +14,6 @@ from .storage import WindowPoint
 RULE_TEMPORAL = "A"
 RULE_CROSS = "B"
 RULE_ABSOLUTE = "C"
-RULE_NAMES = {
-    RULE_TEMPORAL: "A (vs. historial del itinerario)",
-    RULE_CROSS: "B (vs. ventana del destino)",
-    RULE_ABSOLUTE: "C (umbral absoluto)",
-}
 
 
 @dataclass(frozen=True)

@@ -63,10 +63,10 @@ optimización se hace eligiendo qué pares consultar.
   `precio_pp < media × (1 − 0.15)` o si el z robusto `(precio − mediana) / (1.4826 × MAD) < −2.5`.
   Si el MAD es 0 (precios idénticos), solo aplica la condición de la media.
 - **Regla B (transversal):** el itinerario contra el último precio conocido de todos los pares del mismo
-  destino (mínimo 10 pares). Alerta si está en el 10% más barato **y** ≥ 15% debajo de la media. La alerta
-  indica la antigüedad de los datos de comparación.
+  destino (mínimo 10 pares). Alerta si está en el 10% más barato **y** ≥ 15% debajo de la media.
 - **Regla C (absoluta):** `absolute_threshold_usd_pp`, desactivada mientras sea `null`.
-- Si se disparan varias reglas, se manda **una sola alerta** que las enumera.
+- Si se disparan varias reglas, se manda **una sola alerta**. La regla no se muestra en el mensaje, pero
+  queda guardada en la tabla `alerts` y en el log de la corrida.
 - **Anti-spam:** un itinerario ya alertado solo se vuelve a alertar si su precio baja ≥ 3% respecto de la
   última alerta.
 
@@ -79,19 +79,22 @@ para los itinerarios que disparan alerta**.
 Ejemplo de alerta:
 
 ```
-✈️ Precio bajo EZE→GIG 15/01–25/01: USD 412 por persona
+Precio bajo EZE→GIG 15/01–25/01: USD 412 por persona
 
-Destino: Río de Janeiro (Galeão) (GIG)
-Origen: Buenos Aires (Ezeiza) (EZE)
 Fechas: vie 15/01/2027 → lun 25/01/2027 (10 días)
-Escalas: 1 (máximo por tramo) · Aerolíneas: AR, G3
+Escalas: 1
+Aerolíneas Argentinas, GOL
 Precio: USD 412 por persona · USD 2.060 total (5 adultos, con impuestos)
-Vs. itinerario: 17,6% debajo de la media (8 obs., media USD 500)
-z robusto del itinerario: -5.40
-Vs. ventana GIG: 21,0% debajo de la media (puesto 1 de 39, media USD 522, datos de 0 a 6 días de antigüedad)
-Regla: A (vs. historial del itinerario) + B (vs. ventana del destino)
 Reserva: https://...
+
+>>STATS<<
+Vs. itinerario: 17,6% debajo de la media (8 obs., media USD 500)
+Vs. ventana GIG: 21,0% debajo de la media (puesto 1 de 39, media USD 522)
+z robusto del itinerario: -5.40
 ```
+
+Los nombres de las aerolíneas salen de `airline_names` en `config.yaml`; si aparece un código que no está
+cargado, se muestra el código IATA.
 
 **Robustez.** Cada consulta tiene timeout, hasta 3 reintentos con backoff exponencial (ante timeouts,
 errores de conexión, 424, 429 y 5xx) y nunca frena la corrida. Los errores 401/402/403 (clave inválida,
