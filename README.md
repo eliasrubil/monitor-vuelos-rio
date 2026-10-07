@@ -67,7 +67,7 @@ optimización se hace eligiendo qué pares consultar.
   `precio_pp < media × (1 − 0.15)` o si el z robusto `(precio − mediana) / (1.4826 × MAD) < −2.5`.
   Si el MAD es 0 (precios idénticos), solo aplica la condición de la media.
 - **Regla B (transversal):** el itinerario contra el último precio conocido de todos los pares del mismo
-  destino (mínimo 10 pares). Alerta si está en el 10% más barato **y** ≥ 15% debajo de la media.
+  destino (mínimo 10 pares). Alerta si está en el 8% más barato **y** ≥ 15% debajo de la media.
 - **Regla C (absoluta):** `absolute_threshold_usd_pp`, desactivada mientras sea `null`.
 - Si se disparan varias reglas, se manda **una sola alerta**. La regla no se muestra en el mensaje, pero
   queda guardada en la tabla `alerts` y en el log de la corrida.
