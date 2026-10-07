@@ -45,8 +45,8 @@ y AEP, incluidas las combinaciones mixtas (ida desde EZE, vuelta a AEP). El aero
 tramo (`departure_airport` / `arrival_airport`) y se muestra en las alertas (`EZE`, `AEP` o `EZE/AEP` si ida
 y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB**: para Río se usa solo GIG
 (no el código de ciudad `RIO`, que incluye Santos Dumont) y para São Paulo solo GRU.
-`search.airports_exclude: [SDU]` descarta cualquier itinerario que salga, llegue o haga escala en Santos
-Dumont.
+`search.airports_exclude: [SDU]` impide que Santos Dumont sea la salida o la llegada de la ida o de la vuelta
+(nunca es destino). Como escala sí se acepta: BUE → SDU → GIG en la ida o GIG → SDU → BUE en la vuelta.
 
 **Optimización de consultas** (por destino):
 
@@ -207,6 +207,8 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   los mensajes en el log, pero **no guarda precios ni envía alertas**. Como Ignav cobra esas requests,
   **se suman al contador de uso del mes**: el workflow registra la corrida (`runs.mode = 'dry_run'`) y las
   requests en la base, y la commitea.
+- **demo_alert:** manda alertas simuladas (un email y un mensaje de Telegram) para ver cómo se ven, sin
+  consultar la API ni tocar la base.
 - **full_scan:** barrido completo de todas las combinaciones (117 requests).
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar

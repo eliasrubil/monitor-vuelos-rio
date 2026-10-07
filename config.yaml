@@ -24,8 +24,8 @@ search:
   # Aerolíneas que nunca se consideran: se excluyen en la búsqueda (airlines_exclude de la API) y además
   # se descarta cualquier itinerario con un tramo operado por ellas. FO = Flybondi.
   airlines_exclude: [FO]
-  # Aeropuertos que nunca se consideran: se descarta cualquier itinerario que salga, llegue o haga escala en
-  # ellos. SDU = Santos Dumont (Río).
+  # Aeropuertos que nunca pueden ser salida ni llegada de un tramo (ni el destino del viaje). Como escala
+  # están permitidos: BUE -> SDU -> GIG o GIG -> SDU -> BUE se aceptan. SDU = Santos Dumont (Río).
   airports_exclude: [SDU]
 
 ignav:

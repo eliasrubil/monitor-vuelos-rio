@@ -96,5 +96,7 @@ class Itinerary:
     source_ref: Optional[str] = None
     self_transfer: bool = False
     airports: tuple[str, ...] = field(default_factory=tuple)   # todos los aeropuertos de todos los tramos
+    # Salida y llegada de la ida y de la vuelta (sin escalas): (ida_desde, ida_hasta, vuelta_desde, vuelta_hasta)
+    endpoints: tuple[Optional[str], ...] = field(default_factory=tuple)
     depart_airport: Optional[str] = None
     return_airport: Optional[str] = None

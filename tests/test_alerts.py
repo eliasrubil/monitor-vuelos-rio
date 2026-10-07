@@ -181,3 +181,17 @@ def test_messages_use_argentina_time(cfg):
     now = dt.datetime(2026, 10, 7, 13, 15, tzinfo=dt.timezone.utc)
     for _, body in (test_message(now), error_message(now, "x"), summary_message(cfg, now, "full", 1, 0, 1, 0, [], [], [])):
         assert "07/10/2026 10:15 hora argentina" in body and "UTC" not in body
+
+
+def test_demo_sends_one_telegram_and_one_email(cfg):
+    from monitor.demo import send_demo
+
+    from .conftest import FakeChannel
+    tg, mail = FakeChannel("telegram"), FakeChannel("email")
+    delivered = send_demo(cfg, Notifier([tg, mail]), dt.datetime(2026, 10, 7, 14, tzinfo=dt.timezone.utc))
+    assert delivered == ["telegram", "email"]
+    assert len(tg.sent) == 1 and len(mail.sent) == 1
+    text = tg.sent[0][1]
+    assert text.startswith("[PRUEBA - valores simulados]\nEZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona")
+    assert "AEP/EZE --> CFB" in text and "Reserva Ida:" in text and "EZE --> GRU" in text
+    assert mail.sent[0][0].startswith("[PRUEBA - valores simulados] 3 precios bajos")
