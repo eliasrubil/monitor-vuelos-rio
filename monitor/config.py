@@ -39,6 +39,7 @@ class SearchConfig:
     cabin_class: str = "economy"
     market: str = "US"
     currency: str = "USD"
+    airlines_exclude: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -185,6 +186,9 @@ def _validate(cfg: Config) -> Config:
     s.return_until = _as_date(s.return_until, "search.return_until")
     if cfg.schedule.stop_after is not None:
         cfg.schedule.stop_after = _as_date(cfg.schedule.stop_after, "schedule.stop_after")
+    s.airlines_exclude = [c.upper() for c in s.airlines_exclude]
+    if any(len(c) != 2 for c in s.airlines_exclude):
+        raise ConfigError("search.airlines_exclude: usar códigos IATA de aerolínea de 2 caracteres")
     s.origins = [c.upper() for c in s.origins]
     s.destinations = [c.upper() for c in s.destinations]
     for code in [*s.origins, *s.destinations]:

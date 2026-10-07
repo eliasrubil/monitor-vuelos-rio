@@ -104,6 +104,8 @@ class IgnavSource(PriceSource):
             "market": query.market,
             "allow_self_transfer": self._cfg.allow_self_transfer,
         }
+        if query.airlines_exclude:
+            payload["airlines_exclude"] = list(query.airlines_exclude)
         status, data, attempts, error = self._post("/fares/round-trip", payload)
         billable = status == 200
         if status != 200 or data is None:
@@ -123,6 +125,8 @@ class IgnavSource(PriceSource):
         valid = []
         for c in candidates:
             if c.stops > query.max_stops:
+                continue
+            if set(c.airlines) & set(query.airlines_exclude):
                 continue
             if c.currency != query.currency:
                 if c.currency not in self._currency_warned:
@@ -183,11 +187,33 @@ class IgnavSource(PriceSource):
         if status != 200 or data is None:
             return LinkOutcome(http_status=status, attempts=attempts, billable=status == 200,
                                error=error or f"HTTP {status}", fatal=status in FATAL_STATUSES)
-        for option in data.get("booking_options") or []:
-            for link in option.get("links") or []:
-                if link.get("url"):
-                    return LinkOutcome(url=link["url"], http_status=status, attempts=attempts, billable=True)
-        return LinkOutcome(http_status=status, attempts=attempts, billable=True, error="sin links de reserva")
+        links = pick_booking_links(data.get("booking_options") or [])
+        return LinkOutcome(links=links, http_status=status, attempts=attempts, billable=True,
+                           error=None if links else "sin links de reserva")
+
+
+def pick_booking_links(options: list[dict]) -> list[tuple[str, Optional[str]]]:
+    """Prefiere una opción que cubra ida y vuelta (legs = outbound + inbound). Si no hay, devuelve un link por
+    tramo, etiquetado "Ida" / "Vuelta". Una opción sin legs se usa solo si no hay nada mejor."""
+    full = unknown = None
+    per_leg: dict[str, str] = {}
+    for option in options:
+        url = next((link["url"] for link in option.get("links") or [] if link.get("url")), None)
+        if not url:
+            continue
+        legs = {leg for leg in option.get("legs") or [] if isinstance(leg, str)}
+        if {"outbound", "inbound"} <= legs:
+            full = full or url
+        elif legs:
+            for leg in legs:
+                per_leg.setdefault(leg, url)
+        else:
+            unknown = unknown or url
+    if full:
+        return [("", full)]
+    if per_leg:
+        return [("Ida", per_leg.get("outbound")), ("Vuelta", per_leg.get("inbound"))]
+    return [("", unknown)] if unknown else []
 
 
 def _error_message(resp: Any) -> str:

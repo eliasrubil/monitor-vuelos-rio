@@ -18,6 +18,7 @@ from .alerts.format import (
     budget_skip_message,
     error_message,
     summary_message,
+    telegram_alert_chunks,
 )
 from .config import Config
 from .detection import Evaluation, evaluate, passes_antispam
@@ -131,9 +132,9 @@ class Runner:
         if statuses["error"]:
             self.notes.append(f"{statuses['error']} consultas con error")
 
-        alerts = self._detect(run_id, now)
-        billable += self._fetch_booking_links(run_id, alerts, now)
-        sent = self._send_alerts(run_id, alerts)
+        groups = self._group_same_price(self._detect(run_id, now))
+        billable += self._fetch_booking_links(run_id, [members[0] for members in groups], now)
+        sent = self._send_alerts(run_id, groups)
 
         if fatal_error:
             self.notes.append(f"Error fatal de la fuente: {fatal_error}")
@@ -188,7 +189,7 @@ class Runner:
     def _search_query(self, q: PlannedQuery) -> SearchQuery:
         s = self.cfg.search
         return SearchQuery(q.origin, q.destination, q.depart, q.ret, s.adults, s.max_stops, s.cabin_class,
-                           s.market, s.currency)
+                           s.market, s.currency, tuple(s.airlines_exclude))
 
     def _apply_outcome(self, run_id: int, q: PlannedQuery, outcome: SearchOutcome, seq: int) -> None:
         if outcome.status not in (STATUS_OK, STATUS_NO_RESULTS):
@@ -237,7 +238,13 @@ class Runner:
         det = self.cfg.detection
         windows = {}
         alerts = []
+        excluded = set(self.cfg.search.airlines_exclude)
         for c in self._candidates(run_id):
+            if excluded & {a.strip() for a in c.airlines.split(",")}:
+                # Red de seguridad: la fuente ya las filtra, pero nunca se alerta por una aerolínea excluida.
+                log.warning("%s %s/%s: aerolínea excluida (%s), no se evalúa", c.destination, c.depart, c.ret,
+                            c.airlines)
+                continue
             if c.destination not in windows:
                 windows[c.destination] = self.store.window(c.destination)
             history = self.store.itinerary_history(c.destination, c.depart, c.ret, exclude_run=run_id)
@@ -254,6 +261,21 @@ class Runner:
             alerts.append((c, ev))
         return alerts
 
+    @staticmethod
+    def _group_same_price(alerts: list[tuple[Candidate, Evaluation]]) -> list[list[tuple[Candidate, Evaluation]]]:
+        """Agrupa las alertas del mismo origen y destino con exactamente el mismo precio. Se avisa solo la primera
+        (la de ida más temprana) y se menciona cuántas fechas más tienen ese precio."""
+        groups: dict[tuple, list[tuple[Candidate, Evaluation]]] = {}
+        for c, ev in alerts:
+            groups.setdefault((c.destination, c.origin, round(c.price_pp, 2)), []).append((c, ev))
+        out = []
+        for members in groups.values():
+            members.sort(key=lambda a: (a[0].depart, a[0].ret))
+            members[0][0].same_price_count = len(members) - 1
+            out.append(members)
+        out.sort(key=lambda m: (m[0][0].destination, m[0][0].depart, m[0][0].ret, m[0][0].origin))
+        return out
+
     def _fetch_booking_links(self, run_id: int, alerts: list[tuple[Candidate, Evaluation]], now: dt.datetime) -> int:
         if not alerts or not self.cfg.alerts.booking_links:
             return 0
@@ -262,7 +284,7 @@ class Runner:
             return 0
         billable = 0
         for c, _ in alerts:
-            if c.booking_url or not c.source_ref:
+            if c.booking_links or c.booking_url or not c.source_ref:
                 continue
             if self.usage.month_requests(now) + 1 > self.cfg.budget.max_requests_per_month:
                 log.warning("Sin presupuesto para pedir links de reserva")
@@ -270,13 +292,14 @@ class Runner:
             outcome = self.source.booking_link(c.source_ref)
             billable += int(outcome.billable)
             self.usage.record_request(
-                self._usage_run_id, self.clock(), self.source.name, "booking_link", "ok" if outcome.url else "error",
+                self._usage_run_id, self.clock(), self.source.name, "booking_link", "ok" if outcome.ok else "error",
                 outcome.billable, outcome.http_status, outcome.attempts, outcome.error,
                 c.origin, c.destination, c.depart, c.ret,
             )
-            if outcome.url:
-                c.booking_url = outcome.url
-                self.store.set_booking_url(c.observation_id, outcome.url)
+            if outcome.ok:
+                c.booking_links = outcome.links
+                self.store.set_booking_url(c.observation_id, "\n".join(
+                    f"{label}: {url}" if label else url for label, url in outcome.links if url))
             else:
                 log.warning("No se obtuvo link de reserva para %s %s/%s: %s", c.destination, c.depart, c.ret,
                             outcome.error)
@@ -284,22 +307,29 @@ class Runner:
                 break
         return billable
 
-    def _send_alerts(self, run_id: int, alerts: list[tuple[Candidate, Evaluation]]) -> int:
-        if not alerts:
+    def _send_alerts(self, run_id: int, groups: list[list[tuple[Candidate, Evaluation]]]) -> int:
+        """Telegram: todas las alertas en un único mensaje (partido si supera el límite). Email: un mensaje con
+        todas. Cada grupo de mismo precio se avisa una vez, pero se registra para todas sus fechas (anti-spam)."""
+        if not groups:
             return 0
-        messages = [alert_message(self.cfg, c, ev) for c, ev in alerts]
-        per_alert = [self.notifier.send(subject, text, only={"telegram"}) for subject, text in messages]
+        leads = [members[0] for members in groups]
+        telegram_ok: set[int] = set()
+        for text, indices in telegram_alert_chunks([c for c, _ in leads]):
+            if self.notifier.send("", text, only={"telegram"}):
+                telegram_ok.update(indices)
+        messages = [alert_message(self.cfg, c, ev) for c, ev in leads]
         email_ok = self.notifier.send(*alerts_email(self.cfg, messages), only={"email"})
         sent = 0
-        for (c, ev), channels in zip(alerts, per_alert):
-            channels = channels + email_ok
+        for i, members in enumerate(groups):
+            channels = (["telegram"] if i in telegram_ok else []) + email_ok
             if not channels:
                 continue   # no se registra: se reintenta en la próxima corrida
             sent += 1
-            self.store.record_alert(run_id, self.clock(), c.origin, c.destination, c.depart, c.ret, c.price_pp,
-                                    c.price_total, ev.rules, channels)
-        if sent < len(alerts) and not self.dry_run:
-            log.error("%d alertas no se pudieron enviar por ningún canal", len(alerts) - sent)
+            for c, ev in members:
+                self.store.record_alert(run_id, self.clock(), c.origin, c.destination, c.depart, c.ret, c.price_pp,
+                                        c.price_total, ev.rules, channels)
+        if sent < len(groups) and not self.dry_run:
+            log.error("%d alertas no se pudieron enviar por ningún canal", len(groups) - sent)
         return sent
 
     def _send_summary(self, now: dt.datetime, mode: str, executed: int, saved: int, month_total: int, sent: int,

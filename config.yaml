@@ -22,6 +22,9 @@ search:
   cabin_class: economy
   market: US                   # mercado de Ignav (define la moneda)
   currency: USD                # moneda esperada; se descartan tarifas en otra moneda
+  # Aerolíneas que nunca se consideran: se excluyen en la búsqueda (airlines_exclude de la API) y además
+  # se descarta cualquier itinerario con un tramo operado por ellas. FO = Flybondi.
+  airlines_exclude: [FO]
 
 ignav:
   base_url: https://ignav.com/api

@@ -72,9 +72,10 @@ class FakeSource(PriceSource):
 
     name = "fake"
 
-    def __init__(self, price_fn: PriceFn, adults: int = 5):
+    def __init__(self, price_fn: PriceFn, adults: int = 5, airlines_fn=None):
         self.price_fn = price_fn
         self.adults = adults
+        self.airlines_fn = airlines_fn or (lambda q: ("AR", "G3"))
         self.calls: list[SearchQuery] = []
         self.link_calls: list[str] = []
 
@@ -89,12 +90,13 @@ class FakeSource(PriceSource):
             return SearchOutcome(STATUS_NO_RESULTS, http_status=200, attempts=1, billable=True)
         ref = f"{query.origin}-{query.destination}-{query.depart}-{query.ret}"
         quote = Quote(price_total=value * self.adults, price_pp=value, currency="USD", stops=1,
-                      airlines=("AR", "G3"), source_ref=ref)
+                      airlines=tuple(self.airlines_fn(query)), source_ref=ref)
         return SearchOutcome(STATUS_OK, quote=quote, http_status=200, attempts=1, billable=True)
 
     def booking_link(self, source_ref: str) -> LinkOutcome:
         self.link_calls.append(source_ref)
-        return LinkOutcome(url=f"https://example.com/book/{source_ref}", http_status=200, attempts=1, billable=True)
+        return LinkOutcome(links=[("", f"https://example.com/book/{source_ref}")], http_status=200, attempts=1,
+                           billable=True)
 
 
 class FakeChannel:
