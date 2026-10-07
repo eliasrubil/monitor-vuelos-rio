@@ -9,6 +9,8 @@ from typing import Optional
 from ..config import Config
 from ..detection import Evaluation
 
+# Argentina no tiene horario de verano: UTC-3 todo el año.
+AR_TZ = dt.timezone(dt.timedelta(hours=-3))
 STATS_TITLE = ">>STATS<<"
 TELEGRAM_MAX_CHARS = 4000   # Telegram admite 4096 caracteres por mensaje
 WEEKDAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
@@ -49,6 +51,11 @@ class Candidate:
     @property
     def duration(self) -> int:
         return (self.ret - self.depart).days
+
+
+def ar_time(ts: dt.datetime) -> str:
+    """Fecha y hora en hora argentina, p. ej. "07/10/2026 10:15 hora argentina"."""
+    return f"{ts.astimezone(AR_TZ):%d/%m/%Y %H:%M} hora argentina"
 
 
 def money(amount: float, currency: str = "USD") -> str:
@@ -183,11 +190,11 @@ def summary_message(
     destinations: list[DestinationSummary],
     notes: list[str],
 ) -> tuple[str, str]:
-    subject = f"Resumen vuelos {now:%d/%m/%Y}: " + (
+    subject = f"Resumen vuelos {now.astimezone(AR_TZ):%d/%m/%Y}: " + (
         f"mejor {top[0].destination} {money(top[0].price_pp, cfg.search.currency)} pp" if top else "sin precios"
     )
     lines = [
-        f"Corrida {now:%Y-%m-%d %H:%M} UTC ({mode})",
+        f"Corrida {ar_time(now)} ({mode})",
         f"Consultas: {executed} hechas, {saved} ahorradas · acumulado del mes: {month_total}"
         f"/{cfg.budget.max_requests_per_month}",
         f"Alertas enviadas: {alerts_sent}",
@@ -222,7 +229,7 @@ def budget_skip_message(cfg: Config, now: dt.datetime, used: int, estimated: int
     limit = cfg.budget.max_requests_per_month
     subject = "Monitor de vuelos: corrida salteada por presupuesto"
     text = (
-        f"La corrida del {now:%Y-%m-%d %H:%M} UTC necesitaba ~{estimated} requests y el acumulado del mes es "
+        f"La corrida del {ar_time(now)} necesitaba ~{estimated} requests y el acumulado del mes es "
         f"{used}. Con el tope de {limit} (max_requests_per_month) se superaría el límite, así que no se consultó "
         f"nada. Subí budget.max_requests_per_month en config.yaml o bajá top_k/rotating_k si querés seguir."
     )
@@ -230,11 +237,11 @@ def budget_skip_message(cfg: Config, now: dt.datetime, used: int, estimated: int
 
 
 def error_message(now: dt.datetime, detail: str, title: str = "error de la fuente") -> tuple[str, str]:
-    return f"Monitor de vuelos: {title}", f"Corrida {now:%Y-%m-%d %H:%M} UTC.\n{detail}"
+    return f"Monitor de vuelos: {title}", f"Corrida {ar_time(now)}.\n{detail}"
 
 
 def test_message(now: dt.datetime) -> tuple[str, str]:
     return (
         "Monitor de vuelos: mensaje de prueba",
-        f"Si recibís esto, el canal está bien configurado ({now:%Y-%m-%d %H:%M} UTC).",
+        f"Si recibís esto, el canal está bien configurado ({ar_time(now)}).",
     )
