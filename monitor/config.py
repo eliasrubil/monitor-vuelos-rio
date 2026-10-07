@@ -98,7 +98,7 @@ class DetectionConfig:
 class AlertsConfig:
     telegram: bool = True
     email: bool = True
-    summary_email: bool = True
+    summary_telegram: bool = True      # resumen de la corrida por Telegram (el email lleva solo alertas)
     summary_top_n: int = 5
     booking_links: bool = True
 

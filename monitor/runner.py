@@ -141,7 +141,7 @@ class Runner:
 
         saved = plan.universe - executed
         month_total = self.usage.month_requests(now)
-        if self.cfg.alerts.summary_email:
+        if self.cfg.alerts.summary_telegram:
             self._send_summary(now, mode, executed, saved, month_total, sent, plan)
 
         status = "ok" if not fatal_error and not statuses["error"] else "partial"
@@ -349,4 +349,4 @@ class Runner:
         top.sort(key=lambda t: (t.price_pp, t.destination, t.depart, t.ret))
         top = top[: self.cfg.alerts.summary_top_n]
         self.notifier.send(*summary_message(self.cfg, now, mode, executed, saved, month_total, sent, top, dests,
-                                            self.notes), only={"email"})
+                                            self.notes), only={"telegram"})

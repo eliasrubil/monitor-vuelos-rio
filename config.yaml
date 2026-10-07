@@ -70,7 +70,7 @@ detection:
 alerts:
   telegram: true
   email: true
-  summary_email: true          # resumen por email en cada corrida
+  summary_telegram: true       # resumen de la corrida por Telegram; el email lleva solo las alertas (uno por día)
   summary_top_n: 5
   booking_links: true          # pide el link de reserva solo para itinerarios alertados
 
