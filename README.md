@@ -83,10 +83,11 @@ Precio bajo EZE→GIG 15/01–25/01: USD 412 por persona
 
 Fechas: vie 15/01/2027 → lun 25/01/2027 (10 días)
 Escalas: 1
-Aerolíneas: Aerolíneas Argentinas, GOL
+Aerolíneas Argentinas, GOL
 Precio: USD 412 por persona · USD 2.060 total (5 adultos, con impuestos)
 Reserva: https://...
 
+>>STATS<<
 Vs. itinerario: 17,6% debajo de la media (8 obs., media USD 500)
 Vs. ventana GIG: 21,0% debajo de la media (puesto 1 de 39, media USD 522)
 z robusto del itinerario: -5.40

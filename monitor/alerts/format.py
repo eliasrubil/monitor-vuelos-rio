@@ -9,6 +9,7 @@ from typing import Optional
 from ..config import Config
 from ..detection import Evaluation
 
+STATS_TITLE = ">>STATS<<"
 WEEKDAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
 
@@ -72,7 +73,7 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     details = [
         f"Fechas: {fdate(c.depart)} → {fdate(c.ret)} ({c.duration} días)",
         f"Escalas: {c.stops}",
-        f"{'Aerolíneas' if len(codes) > 1 else 'Aerolínea'}: {airlines}",
+        airlines,
         f"Precio: {money(c.price_pp, c.currency)} por persona · {money(c.price_total, c.currency)} total "
         f"({cfg.search.adults} adultos, con impuestos)",
         f"Reserva: {c.booking_url}" if c.booking_url else "Reserva: sin link disponible",
@@ -85,7 +86,7 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     ]
     if ev.robust_z is not None:
         stats.append(f"z robusto del itinerario: {ev.robust_z:.2f}")
-    return subject, "\n".join(details) + "\n\n" + "\n".join(stats)
+    return subject, "\n".join(details) + "\n\n" + STATS_TITLE + "\n" + "\n".join(stats)
 
 
 def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str]:

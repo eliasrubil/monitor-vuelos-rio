@@ -128,10 +128,12 @@ def test_alert_message_contents(cfg):
     subject, text = alert_message(cfg, c, ev)
     assert subject == "Precio bajo EZE→GIG 15/01–25/01: USD 412 por persona"
     details, stats = text.split("\n\n")
+    assert stats.splitlines()[0] == ">>STATS<<"
+    stats = "\n".join(stats.splitlines()[1:])
     assert details.splitlines() == [
         "Fechas: vie 15/01/2027 → lun 25/01/2027 (10 días)",
         "Escalas: 1",
-        "Aerolíneas: Aerolíneas Argentinas, GOL",
+        "Aerolíneas Argentinas, GOL",
         "Precio: USD 412 por persona · USD 2.060 total (5 adultos, con impuestos)",
         "Reserva: https://example.com/x",
     ]
@@ -147,7 +149,7 @@ def test_single_unknown_airline_shows_code(cfg):
     c = Candidate("AEP", "CFB", dt.date(2027, 1, 20), dt.date(2027, 1, 31), 0, "ZZ", 834.4, 4172.0, "USD", 1)
     ev = evaluate(834.4, [], [], DetectionConfig(), dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc))
     _, text = alert_message(cfg, c, ev)
-    assert "Escalas: 0\nAerolínea: ZZ\n" in text
+    assert "Escalas: 0\nZZ\n" in text
 
 
 def test_no_emojis_in_any_message(cfg):
