@@ -49,8 +49,8 @@ optimization:
   max_staleness_runs: 6        # ningún par queda más de N corridas (de su destino) sin actualizar
   no_service_after_empty_runs: 2
   recheck_days: 14             # cada cuánto se reconsulta un par marcado no_service
-  reduced_destinations: [GRU]
-  reduced_interval_days: 2     # GRU cada 2 días: ~1.000 requests/mes con BUE
+  reduced_destinations: []     # sin modo reducido: GRU se consulta todos los días como GIG y CFB (antes [GRU])
+  reduced_interval_days: 2     # solo aplica a destinos en reduced_destinations
   reduced_reference_destination: GIG
   gru_margin_usd: 50           # GRU pasa a normal si mediana_pp(GRU) <= mediana_pp(GIG) - margen
 

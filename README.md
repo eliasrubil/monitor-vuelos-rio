@@ -56,7 +56,7 @@ y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB*
 | Corridas siguientes | `top_k` (8) pares más baratos + `rotating_k` (5) del resto, el dato más viejo primero |
 | Garantía de frescura | Si un par llegaría a `max_staleness_runs` (6) corridas sin actualizar, se agrega igual |
 | `no_service` | Una consulta que dio "sin resultados" 2 corridas seguidas se marca `no_service` y se reconsulta cada `recheck_days` (14) |
-| GRU (modo reducido) | Se consulta cada `reduced_interval_days` (2). Pasa a seguimiento normal si su mediana por persona ≤ mediana de GIG − `gru_margin_usd` (50); si deja de cumplirlo, vuelve a reducido |
+| Modo reducido (desactivado) | Hoy los tres destinos, GRU incluido, se consultan todos los días (`reduced_destinations: []`). Si se agrega un destino a esa lista, se consulta cada `reduced_interval_days` y pasa a diario cuando su mediana ≤ mediana de GIG − `gru_margin_usd` |
 
 Ignav no ofrece búsqueda por calendario ni fechas flexibles (cada consulta es un par de fechas), así que la
 optimización se hace eligiendo qué pares consultar.
@@ -287,13 +287,12 @@ Con la configuración actual (medido con una simulación de 30 días):
 | Corrida | Requests |
 |---|---|
 | Barrido inicial (39 pares × 3 destinos, origen BUE) | 117 |
-| Día normal (GIG + CFB: 13 pares c/u) | 26 (27 si se fuerza un par viejo) |
-| Día en que toca GRU (cada 2 días) | ~40 |
+| Día normal (GIG + GRU + CFB: 13 pares c/u) | ~39–40 |
 | Links de reserva | 1 por alerta |
 | Dry run manual | hasta 4 |
-| **Mes típico** | **~980** (el primer mes ~1.100 con el barrido) |
+| **Mes típico** | **~1.180** (el primer mes ~1.300 con el barrido) |
 
-Costo: ~USD 2 por mes (USD 2 cada 1.000 requests).
+Costo: ~USD 2,4 por mes (USD 2 cada 1.000 requests).
 
 ---
 
