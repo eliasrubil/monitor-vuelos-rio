@@ -61,7 +61,7 @@ def test_first_run_is_full_scan(cfg, notifier, channels, clock):
     assert "Top 5" in summary[1]
 
 
-def test_incremental_run_selects_top_rotating_and_skips_reduced_gru(cfg, notifier, clock):
+def test_incremental_run_queries_all_destinations_daily(cfg, notifier, clock):
     run_once(cfg, FakeSource(constant_prices()), notifier, clock)
     clock.advance()
     src = FakeSource(constant_prices())
@@ -69,13 +69,13 @@ def test_incremental_run_selects_top_rotating_and_skips_reduced_gru(cfg, notifie
     per_dest = defaultdict(set)
     for q in src.calls:
         per_dest[q.destination].add((q.depart, q.ret))
-    # GRU en modo reducido (su mediana no es <= GIG - 80) y consultado hace 1 día -> salteado
-    assert set(per_dest) == {"GIG", "CFB"}
-    assert len(per_dest["GIG"]) == 8 + 5
-    assert len(src.calls) == 2 * 13
+    # Sin modo reducido: GRU se consulta todos los días como GIG y CFB.
+    assert set(per_dest) == {"GIG", "GRU", "CFB"}
+    assert len(per_dest["GIG"]) == len(per_dest["GRU"]) == 8 + 5
+    assert len(src.calls) == 3 * 13
     run = db(cfg).execute("SELECT * FROM runs ORDER BY id DESC").fetchone()
     assert run["mode"] == "incremental"
-    assert run["saved_queries"] == 117 - 26
+    assert run["saved_queries"] == 117 - 39
 
 
 def test_top_k_are_the_cheapest_pairs(cfg, notifier, clock):
@@ -146,7 +146,9 @@ def test_no_service_after_two_empty_runs_and_recheck(raw_config, tmp_path, notif
 
 
 def test_gru_reduced_cadence_and_promotion(raw_config, tmp_path, notifier, clock):
-    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")})
+    # El modo reducido sigue disponible por config (hoy desactivado: reduced_destinations: []).
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")},
+                      optimization={"reduced_destinations": ["GRU"]})
     run_once(cfg, FakeSource(constant_prices()), notifier, clock)   # GRU 600 vs GIG 400: reducido
     gru_runs = []
     for day in range(1, 15):

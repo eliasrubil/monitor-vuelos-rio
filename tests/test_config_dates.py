@@ -12,7 +12,7 @@ def test_repo_config_loads():
     cfg = load_config(ROOT / "config.yaml")
     assert cfg.search.origins == ["BUE"]
     assert cfg.search.airports_exclude == ["SDU"] and cfg.search.airlines_exclude == ["FO"]
-    assert cfg.optimization.gru_margin_usd == 50
+    assert cfg.optimization.reduced_destinations == []   # GRU diario
     assert cfg.detection.cross.max_rank == 3
     assert cfg.search.destinations == ["GIG", "GRU", "CFB"]
     assert cfg.search.open_jaw is False
