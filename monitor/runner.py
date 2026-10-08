@@ -274,7 +274,8 @@ class Runner:
             members.sort(key=lambda a: (a[0].depart, a[0].ret))
             members[0][0].same_price_count = len(members) - 1
             out.append(members)
-        out.sort(key=lambda m: (m[0][0].destination, m[0][0].depart, m[0][0].ret, m[0][0].origin))
+        # Orden creciente por precio por persona (el más barato primero), en el email y en Telegram.
+        out.sort(key=lambda m: (m[0][0].price_pp, m[0][0].destination, m[0][0].depart, m[0][0].ret))
         return out
 
     def _fetch_booking_links(self, run_id: int, alerts: list[tuple[Candidate, Evaluation]], now: dt.datetime) -> int:

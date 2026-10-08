@@ -163,8 +163,21 @@ def test_no_emojis_in_any_message(cfg):
                 budget_skip_message(cfg, now, 100, 50), error_message(now, "x"), test_message(now),
                 summary_message(cfg, now, "full", 1, 0, 1, 0, [], [], [])]
     emoji = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]")
+    brazil_flag = "\U0001F1E7\U0001F1F7"   # única excepción pedida: el título del email diario
     for subject, body in messages:
-        assert not emoji.search(subject + body), subject
+        assert not emoji.search(subject.replace(brazil_flag, "") + body), subject
+
+
+def test_daily_email_subject_tip_and_order(cfg):
+    now = dt.datetime(2026, 10, 8, 11, tzinfo=dt.timezone.utc)
+    def msg(price):
+        c = Candidate("BUE", "GIG", dt.date(2027, 1, 25), dt.date(2027, 2, 5), 0, "JA", price, price * 5, "USD", 1)
+        return alert_message(cfg, c, evaluate(price, [], [], DetectionConfig(), now))
+    subject, body = alerts_email(cfg, [msg(299.8)])
+    assert subject == "Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by Rabo - 1 hallazgo"
+    assert body.rstrip().endswith("Muchas veces la tarifa sigue o hay una muy parecida.")
+    subject, _ = alerts_email(cfg, [msg(299.8), msg(343.6), msg(384.0)])
+    assert subject.endswith(" - 3 hallazgos")
 
 
 def test_alert_message_with_per_leg_links_and_same_price(cfg):
@@ -195,4 +208,4 @@ def test_demo_sends_one_telegram_and_one_email(cfg):
     assert text.startswith("[PRUEBA - valores simulados]\nEZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona "
                            "(+2 fechas más con el mismo precio) - JetSMART\n")
     assert "AEP/EZE --> CFB" in text and "Reserva Ida:" in text and "EZE --> GRU" in text
-    assert mail.sent[0][0].startswith("[PRUEBA - valores simulados] 3 precios bajos")
+    assert mail.sent[0][0] == "[PRUEBA - valores simulados] Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by Rabo - 3 hallazgos"
