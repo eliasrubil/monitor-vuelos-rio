@@ -40,6 +40,7 @@ def demo_alerts(cfg: Config, now: dt.datetime) -> list[tuple[Candidate, object]]
     for c, history, win_mean in specs:
         ev = evaluate(c.price_pp, history, _window(now, c.price_pp, win_mean), cfg.detection, now)
         out.append((c, ev))
+    out.sort(key=lambda a: a[0].price_pp)   # igual que una corrida real: el más barato primero
     return out
 
 

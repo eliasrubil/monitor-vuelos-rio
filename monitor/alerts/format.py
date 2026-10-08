@@ -124,12 +124,17 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     return subject, "\n".join(details) + "\n\n" + STATS_TITLE + "\n" + "\n".join(stats)
 
 
+EMAIL_SUBJECT = "Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by Rabo"   # bandera de Brasil
+EMAIL_TIP = ("Qué hacer si el link ya no funciona o la tarifa se agotó: buscá las mismas fechas directo en la web "
+             "de la aerolínea que figura en la alerta. Muchas veces la tarifa sigue o hay una muy parecida.")
+
+
 def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str]:
-    if len(messages) == 1:
-        return messages[0]
-    subject = f"{len(messages)} precios bajos detectados"
+    """El email diario: todas las alertas (ya ordenadas por precio por persona) y la aclaración al final."""
+    n = len(messages)
+    subject = f"{EMAIL_SUBJECT} - {n} {'hallazgo' if n == 1 else 'hallazgos'}"
     body = "\n\n".join(f"{s}\n{'-' * min(len(s), 60)}\n{t}" for s, t in messages)
-    return subject, body
+    return subject, f"{body}\n\n{'=' * 60}\n{EMAIL_TIP}"
 
 
 def airline_names(cfg: Config, c: Candidate) -> str:

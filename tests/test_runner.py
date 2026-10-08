@@ -265,7 +265,8 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     # un único email por día: solo las alertas
     assert len(channels["email"].sent) == 1
     mail_subject, mail = channels["email"].sent[0]
-    assert "GIG" in mail_subject and "300" in mail_subject
+    assert mail_subject.endswith("by Rabo - 1 hallazgo")
+    assert "Precio bajo EZE→GIG" in mail and "300 por persona" in mail
     assert "Vs. itinerario:" in mail and "USD 1.500 total" in mail and "10 días" in mail
 
     clock.advance()
@@ -372,3 +373,23 @@ def test_telegram_list_is_split_without_cutting_alerts():
     assert sorted(i for _, idx in chunks for i in idx) == list(range(30))
     for text, idx in chunks:
         assert text.count(" --> ") == len(idx) == text.count("Reserva: ")
+
+
+def test_alerts_are_sorted_by_price_per_person(big_cfg, notifier, channels, clock):
+    """El email y Telegram listan las alertas de menor a mayor precio por persona."""
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)
+    channels["telegram"].sent.clear()
+    channels["email"].sent.clear()
+    base = constant_prices()
+    drops = {("CFB", dt.date(2027, 1, 14), dt.date(2027, 1, 23)): 250,      # destino "antes" alfabéticamente
+             ("GIG", dt.date(2027, 1, 25), dt.date(2027, 2, 5)): 200,       # el más barato, fecha más tardía
+             ("GRU", dt.date(2027, 1, 16), dt.date(2027, 1, 26)): 300}
+    src = FakeSource(lambda q: drops.get((q.destination, q.depart, q.ret), base(q)))
+    run_once(cfg, src, notifier, clock, full_scan=True)
+    (_, tg), = alerts_sent(channels["telegram"])
+    assert [l.split(" ")[2] for l in tg.splitlines() if " --> " in l] == ["GIG", "CFB", "GRU"]
+    (subject, mail), = channels["email"].sent
+    assert subject.endswith("- 3 hallazgos")
+    assert mail.index("BUE→GIG") < mail.index("BUE→CFB") < mail.index("BUE→GRU")
+    assert "buscá las mismas fechas directo en la web de la aerolínea" in mail
