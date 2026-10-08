@@ -14,7 +14,7 @@ search:
   # tipo ida GIG / vuelta CFB, pero requiere un adaptador que lo soporte (Ignav todavía no).
   open_jaw: false
   departure_from: 2027-01-14   # fecha de ida >= esta
-  return_until: 2027-02-05     # fecha de vuelta <= esta
+  return_until: 2027-02-06     # fecha de vuelta <= esta
   durations: [9, 10, 11]       # días entre ida y vuelta
   adults: 5
   max_stops: 1
