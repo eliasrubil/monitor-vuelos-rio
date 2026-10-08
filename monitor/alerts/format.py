@@ -124,7 +124,7 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     return subject, "\n".join(details) + "\n\n" + STATS_TITLE + "\n" + "\n".join(stats)
 
 
-EMAIL_SUBJECT = "Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by Rabo"   # bandera de Brasil
+EMAIL_SUBJECT = "Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by BotRabo"   # bandera de Brasil
 EMAIL_TIP = ("Qué hacer si el link ya no funciona o la tarifa se agotó: buscá las mismas fechas directo en la web "
              "de la aerolínea que figura en la alerta. Muchas veces la tarifa sigue o hay una muy parecida.")
 
