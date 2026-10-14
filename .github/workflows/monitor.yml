@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       slot:
-        description: "Corrida: auto (según la hora argentina: noche desde las 14:00), morning o night"
+        description: "Corrida: auto (según la hora; no repite un turno que ya corrió hoy), morning o night (adelanta ese turno: la corrida programada del día se saltea)"
         type: choice
         options: [auto, morning, night]
         default: auto
