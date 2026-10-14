@@ -1,6 +1,6 @@
 # monitor-vuelos-rio
 
-Monitor de precios de vuelos **Buenos Aires → Brasil (GIG, GRU, CFB)**, 100% determinístico (sin LLMs en
+Monitor de precios de vuelos **Buenos Aires → Brasil (GIG, GRU)**, 100% determinístico (sin LLMs en
 tiempo de ejecución). Corre dos veces por día en GitHub Actions (08:00 y 20:00, hora argentina), guarda el historial en SQLite
 (`data/prices.db`, commiteada por el workflow) y avisa por **Telegram** y **email** cuando detecta precios
 bajos.
@@ -43,7 +43,7 @@ config.yaml ─┐
 **Origen y destinos.** El origen es `BUE`, el código de ciudad de Buenos Aires: una sola consulta cubre EZE
 y AEP, incluidas las combinaciones mixtas (ida desde EZE, vuelta a AEP). El aeropuerto real se lee de cada
 tramo (`departure_airport` / `arrival_airport`) y se muestra en las alertas (`EZE`, `AEP` o `EZE/AEP` si ida
-y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB**: para Río se usa solo GIG
+y vuelta usan aeropuertos distintos). Los destinos son **GIG** y **GRU**: para Río se usa solo GIG
 (no el código de ciudad `RIO`, que incluye Santos Dumont) y para São Paulo solo GRU.
 `search.airports_exclude: [SDU]` impide que Santos Dumont sea la salida o la llegada de la ida o de la vuelta
 (nunca es destino). Como escala sí se acepta: BUE → SDU → GIG en la ida o GIG → SDU → BUE en la vuelta.
@@ -53,8 +53,8 @@ y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB*
 | Situación | Qué se consulta |
 |---|---|
 | Primera corrida, o `--full-scan` | Barrido completo: 45 pares por destino |
-| Corrida de la mañana (08:00) | `top_k` (8) pares más baratos + `rotating_k` (5) del resto, el dato más viejo primero |
-| Corrida de la noche (20:00) | Los hallazgos de la mañana (seguimiento) + **todos** los pares con servicio que la mañana no consultó. Así cada fecha se revisa todos los días |
+| Corrida de la mañana (08:00) | `top_k` (12) pares más baratos + `rotating_k` (10) del resto, el dato más viejo primero |
+| Corrida de la noche (20:00) | Los hallazgos de la mañana (seguimiento) + **todos** los pares con servicio que la mañana no consultó + una segunda revisión de los `night_top_k` (12) más baratos. Así cada fecha se revisa todos los días y las más baratas, dos veces |
 | Garantía de frescura | Si un par llegaría a `max_staleness_runs` (6) corridas sin actualizar, se agrega igual |
 | `no_service` | Una consulta que dio "sin resultados" 2 corridas seguidas se marca `no_service` y se reconsulta cada `recheck_days` (14) |
 | Modo reducido (desactivado) | Hoy los tres destinos, GRU incluido, se consultan todos los días (`reduced_destinations: []`). Si se agrega un destino a esa lista, se consulta cada `reduced_interval_days` y pasa a diario cuando su mediana ≤ mediana de GIG − `gru_margin_usd` |
@@ -83,7 +83,7 @@ ninguna alerta):
 I) EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio) - JetSMART
 Reserva Ida: https://...
 Reserva Vuelta: https://...
-II) AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona - Aerolíneas Argentinas
+II) AEP --> GRU 20/01 al 31/01 (11 días) - 434USD por persona - Aerolíneas Argentinas
 Reserva: https://...
 ```
 
@@ -229,7 +229,7 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   requests en la base, y la commitea.
 - **demo_alert:** manda alertas simuladas (un email y un mensaje de Telegram) para ver cómo se ven, sin
   consultar la API ni tocar la base.
-- **full_scan:** barrido completo de todas las combinaciones (135 requests).
+- **full_scan:** barrido completo de todas las combinaciones (90 requests).
 - **slot:** `auto` (por la hora), `morning` o `night`, para forzar qué corrida es.
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
@@ -283,7 +283,7 @@ producen un error, así un typo no pasa desapercibido. Lo más común:
 | Otra fecha de fin | `schedule.stop_after` |
 | Otro horario | los `cron` en `.github/workflows/monitor.yml` (están en UTC; la noche es la que arranca desde las 14:00 hora argentina) |
 
-`search.open_jaw` existe para habilitar a futuro combinaciones tipo ida GIG / vuelta CFB, pero el adaptador
+`search.open_jaw` existe para habilitar a futuro combinaciones tipo ida GIG / vuelta GRU, pero el adaptador
 de Ignav todavía no lo soporta (ver [limitaciones](#limitaciones-conocidas-de-la-api)). Si lo activás, se
 loguea un aviso y se siguen consultando solo idas y vueltas al mismo destino.
 
@@ -307,14 +307,14 @@ Con la configuración actual:
 
 | Corrida | Requests |
 |---|---|
-| Barrido completo (45 pares × 3 destinos, origen BUE) | 135 |
-| Mañana (GIG + GRU + CFB: 13 pares c/u, más fechas que vencen por antigüedad) | ~40–48 |
-| Noche (seguimiento de la mañana + fechas que la mañana no consultó, sin las `no_service`) | ~85–90 |
+| Barrido completo (45 pares × 2 destinos, origen BUE) | 90 |
+| Mañana (GIG + GRU: 22 pares c/u, más fechas que vencen por antigüedad) | ~45–50 |
+| Noche (seguimiento de la mañana + fechas que la mañana no consultó + 12 más baratas de cada destino) | ~65–75 |
 | Links de reserva | 1 por alerta |
 | Dry run manual | hasta 4 |
-| **Mes típico** | **~4.200** |
+| **Mes típico** | **~3.800** |
 
-Costo: ~USD 8,4 por mes (USD 2 cada 1.000 requests).
+Costo: ~USD 7,6 por mes (USD 2 cada 1.000 requests).
 
 ---
 

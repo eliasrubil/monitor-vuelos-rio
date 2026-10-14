@@ -9,7 +9,8 @@ todos los orígenes con servicio. Reglas (por destino):
 - Destinos en modo reducido: solo se consultan cada reduced_interval_days.
 
 La corrida de la noche (plan_night) usa otro criterio: vuelve a consultar los hallazgos de la mañana
-(seguimiento) y barre todos los pares con servicio que la mañana no consultó, para traer opciones nuevas.
+(seguimiento), barre todos los pares con servicio que la mañana no consultó, para traer opciones nuevas, y
+vuelve a consultar los night_top_k pares más baratos de cada destino.
 """
 
 from __future__ import annotations
@@ -220,6 +221,8 @@ def plan_night(
     - followup: los hallazgos de la mañana (origen, destino, ida, vuelta), para saber si mantienen el precio;
     - sweep: todos los pares con servicio que no se consultaron desde `since` (el inicio de la corrida de la
       mañana), es decir, las fechas que la mañana no miró;
+    - top: los night_top_k pares más baratos del destino (último precio conocido), aunque la mañana ya los
+      haya consultado: segunda revisión del día de las fechas que más chances tienen de alertar;
     - recheck: los pares no_service que ya cumplieron recheck_days.
     El modo reducido no aplica a la noche."""
     today = now.date()
@@ -233,6 +236,15 @@ def plan_night(
             plans.append(dplan)
             continue
         states = store.pair_states(dest)
+        priced = sorted(
+            {(st.last_price_pp, d, r) for (o, d, r), st in states.items()
+             if (d, r) in set(pairs) and not st.no_service and st.last_price_pp is not None}
+        )
+        top: set[tuple[dt.date, dt.date]] = set()
+        for _, d, r in priced:
+            if len(top) >= cfg.optimization.night_top_k:
+                break
+            top.add((d, r))
         for d, r in pairs:
             for o in origins:
                 st = states.get((o, d, r))
@@ -244,6 +256,8 @@ def plan_night(
                     reason = "recheck" if due else None
                 elif st is None or st.last_queried_at is None or st.last_queried_at < since:
                     reason = "sweep"
+                elif (d, r) in top:
+                    reason = "top"
                 else:
                     reason = None
                 if reason:
