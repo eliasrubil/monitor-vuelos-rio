@@ -97,6 +97,10 @@ Llega **un email por corrida**, con todas las alertas numeradas en formato compl
   alertadas a la mañana. Se manda si hubo hallazgos a la mañana o si aparece alguno nuevo. Telegram recibe lo
   mismo en formato corto.
 
+Cada email (alertas, avisos de presupuesto, errores y pruebas) lleva al final la imagen de
+`monitor/assets/email_footer.jpg` integrada en el cuerpo, como el banner de un mail corporativo: se ve sin
+descargar nada. Para cambiarla, reemplazá ese archivo (JPEG de ~600 px de ancho).
+
 El **resumen** de cada corrida (consultas, top 5 más baratos y media por destino) va por Telegram y se
 puede desactivar. Si varias fechas del mismo origen y destino alertan con
 exactamente el mismo precio, se avisa solo la primera y se indica cuántas más tienen ese precio (todas quedan

@@ -94,6 +94,22 @@ def test_email_via_gmail_smtp():
     assert msg["To"] == "a@x.com, b@x.com" and msg["Subject"] == "Hola"
 
 
+def test_every_email_has_the_footer_image_inline():
+    FakeSMTP.instances.clear()
+    EmailChannel("yo@gmail.com", "app-pass", "a@x.com", smtp_factory=FakeSMTP).send(
+        "Hola", "Linea 1 <b>\nReserva: https://x.com/a?b=1&c=2")
+    msg = FakeSMTP.instances[0].messages[0]
+    assert msg.get_body(("plain",)).get_content().startswith("Linea 1 <b>")
+    html_part = msg.get_body(("html",))
+    page = html_part.get_content()
+    (img,) = [p for p in msg.walk() if p.get_content_type() == "image/jpeg"]
+    cid = img["Content-ID"].strip("<>")
+    assert page.index("Linea 1 &lt;b&gt;") < page.index(f'src="cid:{cid}"')       # al final, después del texto
+    assert '<a href="https://x.com/a?b=1&amp;c=2">' in page
+    assert img.get_content_disposition() == "inline"
+    assert len(img.get_content()) < 100_000                                        # comprimida
+
+
 def test_email_auth_error_is_alert_error():
     with pytest.raises(AlertError, match="SMTPAuthenticationError"):
         EmailChannel("yo@gmail.com", "bad", "a@x.com", smtp_factory=FakeSMTP).send("a", "b")

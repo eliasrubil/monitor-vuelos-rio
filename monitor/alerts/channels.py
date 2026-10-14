@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import html
 import logging
+import re
 import smtplib
 from email.message import EmailMessage
+from email.utils import make_msgid
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import requests
@@ -12,6 +16,9 @@ import requests
 log = logging.getLogger(__name__)
 
 TELEGRAM_MAX_CHARS = 4000
+# Imagen que va al pie de cada email, integrada en el cuerpo (no como adjunto para descargar).
+EMAIL_FOOTER_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "email_footer.jpg"
+_URL = re.compile(r"https?://[^\s<>\"]+")
 
 
 class AlertError(RuntimeError):
@@ -59,6 +66,7 @@ class EmailChannel:
         smtp_factory: Callable[..., Any] = smtplib.SMTP_SSL,
         host: str = "smtp.gmail.com",
         port: int = 465,
+        footer_image: Optional[Path] = EMAIL_FOOTER_IMAGE,
     ):
         self._address = address
         self._password = app_password
@@ -66,6 +74,7 @@ class EmailChannel:
         self._smtp_factory = smtp_factory
         self._host = host
         self._port = port
+        self._footer = footer_image.read_bytes() if footer_image and footer_image.exists() else None
 
     def send(self, subject: str, text: str) -> None:
         msg = EmailMessage()
@@ -73,6 +82,13 @@ class EmailChannel:
         msg["From"] = self._address
         msg["To"] = ", ".join(self._to)
         msg.set_content(text)
+        if self._footer:
+            # Versión HTML con la imagen embebida al final (cid), como el banner de un mail corporativo:
+            # se ve directamente en el cuerpo, sin descargar nada. El texto plano queda como alternativa.
+            cid = make_msgid(domain="monitor-vuelos")
+            msg.add_alternative(_html_body(text, cid[1:-1]), subtype="html")
+            msg.get_payload()[1].add_related(self._footer, "image", "jpeg", cid=cid, filename="pie.jpg",
+                                             disposition="inline")
         try:
             with self._smtp_factory(self._host, self._port, timeout=30) as smtp:
                 smtp.login(self._address, self._password)
@@ -110,6 +126,20 @@ class LogNotifier(Notifier):
     def send(self, subject: str, text: str, only: Optional[set[str]] = None) -> list[str]:
         log.info("[dry-run] no se envía (%s):\n%s\n%s", ",".join(sorted(only)) if only else "todos", subject, text)
         return []
+
+
+def _html_body(text: str, cid: str) -> str:
+    """El texto del mensaje tal cual (saltos de línea y links clickeables) y la imagen al pie."""
+    body = _URL.sub(lambda m: f'<a href="{m.group(0)}">{m.group(0)}</a>', html.escape(text, quote=False))
+    return (
+        '<!DOCTYPE html><html><body style="margin:0;padding:0">'
+        '<div style="max-width:600px;margin:0 auto;padding:16px;font-family:Arial,Helvetica,sans-serif;'
+        f'font-size:14px;line-height:1.45;color:#202124;white-space:pre-wrap">{body}</div>'
+        '<div style="max-width:600px;margin:0 auto;padding:8px 16px 24px">'
+        f'<img src="cid:{cid}" alt="" width="600" '
+        'style="display:block;width:100%;max-width:600px;height:auto;border:0"></div>'
+        "</body></html>"
+    )
 
 
 def _chunks(text: str, size: int) -> list[str]:
