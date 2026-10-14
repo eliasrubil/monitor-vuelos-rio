@@ -7,6 +7,9 @@ todos los orígenes con servicio. Reglas (por destino):
   más viejo primero, + los pares que superarían max_staleness_runs corridas sin actualizar.
 - Consultas no_service: solo se repiten cada recheck_days.
 - Destinos en modo reducido: solo se consultan cada reduced_interval_days.
+
+La corrida de la noche (plan_night) usa otro criterio: vuelve a consultar los hallazgos de la mañana
+(seguimiento) y barre todos los pares con servicio que la mañana no consultó, para traer opciones nuevas.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ class PlannedQuery:
     destination: str
     depart: dt.date
     ret: dt.date
-    reason: str            # full | top | rotating | stale | recheck
+    reason: str            # full | top | rotating | stale | recheck | followup | sweep
 
 
 @dataclass
@@ -203,3 +206,47 @@ def _select(
             elif o in recheck:
                 queries.append(PlannedQuery(o, dest, p[0], p[1], "recheck"))
     return queries
+
+
+def plan_night(
+    cfg: Config,
+    store: Store,
+    origins: list[str],
+    now: dt.datetime,
+    since: dt.datetime,
+    followups: set[tuple[str, str, dt.date, dt.date]],
+) -> Plan:
+    """Corrida de la noche, por destino:
+    - followup: los hallazgos de la mañana (origen, destino, ida, vuelta), para saber si mantienen el precio;
+    - sweep: todos los pares con servicio que no se consultaron desde `since` (el inicio de la corrida de la
+      mañana), es decir, las fechas que la mañana no miró;
+    - recheck: los pares no_service que ya cumplieron recheck_days.
+    El modo reducido no aplica a la noche."""
+    today = now.date()
+    pairs = date_pairs(cfg.search.departure_from, cfg.search.return_until, cfg.search.durations)
+    plans = []
+    for dest in cfg.search.destinations:
+        dplan = DestinationPlan(destination=dest, mode=MODE_NORMAL, universe=len(pairs) * len(origins))
+        if not store.has_any_observation_attempt(dest):
+            dplan.full = True
+            dplan.queries = [PlannedQuery(o, dest, d, r, "full") for (d, r) in pairs for o in origins]
+            plans.append(dplan)
+            continue
+        states = store.pair_states(dest)
+        for d, r in pairs:
+            for o in origins:
+                st = states.get((o, d, r))
+                if (o, dest, d, r) in followups:
+                    reason = "followup"
+                elif st and st.no_service:
+                    since_check = _days_since(st.last_queried_at, today)
+                    due = since_check is None or since_check >= cfg.optimization.recheck_days
+                    reason = "recheck" if due else None
+                elif st is None or st.last_queried_at is None or st.last_queried_at < since:
+                    reason = "sweep"
+                else:
+                    reason = None
+                if reason:
+                    dplan.queries.append(PlannedQuery(o, dest, d, r, reason))
+        plans.append(dplan)
+    return Plan(plans)

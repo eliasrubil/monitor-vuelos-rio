@@ -7,7 +7,7 @@ import requests
 
 from monitor.alerts import build_notifier
 from monitor.alerts.channels import AlertError, EmailChannel, Notifier, TelegramChannel
-from monitor.alerts.format import Candidate, alert_message, alerts_email
+from monitor.alerts.format import EMAIL_SUBJECT, Candidate, alert_message, alerts_email
 from monitor.config import Secrets
 from monitor.detection import DetectionConfig, evaluate
 from monitor.logsetup import RedactingFilter
@@ -94,6 +94,22 @@ def test_email_via_gmail_smtp():
     assert msg["To"] == "a@x.com, b@x.com" and msg["Subject"] == "Hola"
 
 
+def test_every_email_has_the_footer_image_inline():
+    FakeSMTP.instances.clear()
+    EmailChannel("yo@gmail.com", "app-pass", "a@x.com", smtp_factory=FakeSMTP).send(
+        "Hola", "Linea 1 <b>\nReserva: https://x.com/a?b=1&c=2")
+    msg = FakeSMTP.instances[0].messages[0]
+    assert msg.get_body(("plain",)).get_content().startswith("Linea 1 <b>")
+    html_part = msg.get_body(("html",))
+    page = html_part.get_content()
+    (img,) = [p for p in msg.walk() if p.get_content_type() == "image/jpeg"]
+    cid = img["Content-ID"].strip("<>")
+    assert page.index("Linea 1 &lt;b&gt;") < page.index(f'src="cid:{cid}"')       # al final, después del texto
+    assert '<a href="https://x.com/a?b=1&amp;c=2">' in page
+    assert img.get_content_disposition() == "inline"
+    assert len(img.get_content()) < 100_000                                        # comprimida
+
+
 def test_email_auth_error_is_alert_error():
     with pytest.raises(AlertError, match="SMTPAuthenticationError"):
         EmailChannel("yo@gmail.com", "bad", "a@x.com", smtp_factory=FakeSMTP).send("a", "b")
@@ -174,7 +190,8 @@ def test_daily_email_subject_tip_and_order(cfg):
         c = Candidate("BUE", "GIG", dt.date(2027, 1, 25), dt.date(2027, 2, 5), 0, "JA", price, price * 5, "USD", 1)
         return alert_message(cfg, c, evaluate(price, [], [], DetectionConfig(), now))
     subject, body = alerts_email(cfg, [msg(299.8)])
-    assert subject == "Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by Rabo - 1 hallazgo"
+    assert subject == f"{EMAIL_SUBJECT} - Morning Sunshine! - 1 hallazgo"
+    assert EMAIL_SUBJECT.startswith("Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by ")
     assert body.rstrip().endswith("Muchas veces la tarifa sigue o hay una muy parecida.")
     subject, _ = alerts_email(cfg, [msg(299.8), msg(343.6), msg(384.0)])
     assert subject.endswith(" - 3 hallazgos")
@@ -196,16 +213,75 @@ def test_messages_use_argentina_time(cfg):
         assert "07/10/2026 10:15 hora argentina" in body and "UTC" not in body
 
 
-def test_demo_sends_one_telegram_and_one_email(cfg):
+def test_demo_sends_morning_and_night(cfg):
     from monitor.demo import send_demo
 
     from .conftest import FakeChannel
     tg, mail = FakeChannel("telegram"), FakeChannel("email")
     delivered = send_demo(cfg, Notifier([tg, mail]), dt.datetime(2026, 10, 7, 14, tzinfo=dt.timezone.utc))
     assert delivered == ["telegram", "email"]
-    assert len(tg.sent) == 1 and len(mail.sent) == 1
+    assert len(tg.sent) == 2 and len(mail.sent) == 2      # mañana y noche
     text = tg.sent[0][1]
-    assert text.startswith("[PRUEBA - valores simulados]\nEZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona "
+    assert text.startswith("[PRUEBA - valores simulados]\nI) EZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona "
                            "(+2 fechas más con el mismo precio) - JetSMART\n")
-    assert "AEP/EZE --> CFB" in text and "Reserva Ida:" in text and "EZE --> GRU" in text
-    assert mail.sent[0][0] == "[PRUEBA - valores simulados] Alerta Diaria de Vuelos \U0001F1E7\U0001F1F7 by Rabo - 3 hallazgos"
+    assert "III) AEP/EZE --> CFB" in text and "Reserva Ida:" in text and "II) EZE --> GRU" in text
+    assert mail.sent[0][0] == f"[PRUEBA - valores simulados] {EMAIL_SUBJECT} - Morning Sunshine! - 3 hallazgos"
+    assert mail.sent[1][0] == f"[PRUEBA - valores simulados] {EMAIL_SUBJECT} - Night Owl! - 1 hallazgo nuevo"
+    night = mail.sent[1][1]
+    assert "El hallazgo I) de la mañana mantiene su precio" in night
+    assert "El hallazgo II) de la mañana subió a USD 405 por persona" in night
+    assert "El hallazgo III) de la mañana ya no aparece" in night
+    assert "I) Precio bajo AEP→GRU 24/01–03/02" in night
+
+
+def test_roman_numerals():
+    from monitor.alerts.format import roman
+    assert [roman(n) for n in (1, 2, 3, 4, 5, 9, 12, 40)] == ["I", "II", "III", "IV", "V", "IX", "XII", "XL"]
+
+
+def _followups():
+    from monitor.alerts.format import FollowUp
+    d = dt.date
+    return [FollowUp(1, "BUE", "GRU", d(2027, 1, 16), d(2027, 1, 26), 317.0, "same", 317.2),
+            FollowUp(2, "BUE", "GIG", d(2027, 1, 20), d(2027, 1, 30), 340.0, "up", 352.4),
+            FollowUp(3, "BUE", "CFB", d(2027, 1, 21), d(2027, 1, 31), 640.0, "down", 601.0),
+            FollowUp(4, "BUE", "GIG", d(2027, 1, 22), d(2027, 2, 1), 345.0, "gone"),
+            FollowUp(5, "BUE", "GIG", d(2027, 1, 23), d(2027, 2, 2), 350.0, "error")]
+
+
+def test_night_email_lists_morning_followups_then_new_findings(cfg):
+    now = dt.datetime(2026, 10, 8, 23, tzinfo=dt.timezone.utc)
+    c = Candidate("BUE", "GIG", dt.date(2027, 1, 25), dt.date(2027, 2, 5), 0, "JA", 299.8, 1499.0, "USD", 1)
+    msg = alert_message(cfg, c, evaluate(299.8, [], [], DetectionConfig(), now))
+    subject, body = alerts_email(cfg, [msg], "night", _followups())
+    assert subject == f"{EMAIL_SUBJECT} - Night Owl! - 1 hallazgo nuevo"
+    morning, new, tip = body.split("\n\n" + "=" * 60 + "\n")
+    assert morning.splitlines() == [
+        "Hallazgos de la mañana",
+        "El hallazgo I) de la mañana mantiene su precio",
+        "El hallazgo II) de la mañana subió a USD 352 por persona",
+        "El hallazgo III) de la mañana bajó a USD 601 por persona",
+        "El hallazgo IV) de la mañana ya no aparece",
+        "El hallazgo V) de la mañana no se pudo verificar",
+    ]
+    assert new.startswith("Hallazgos nuevos\n\nI) Precio bajo BUE→GIG 25/01–05/02")
+    assert tip.startswith("Qué hacer si el link")
+    subject, body = alerts_email(cfg, [], "night", _followups())
+    assert subject.endswith("Night Owl! - sin hallazgos nuevos") and "Sin hallazgos nuevos." in body
+
+
+def test_night_telegram_lists_followups_first(cfg):
+    from monitor.alerts.format import telegram_alert_chunks
+    c = Candidate("BUE", "GIG", dt.date(2027, 1, 25), dt.date(2027, 2, 5), 0, "JA", 299.8, 1499.0, "USD", 1,
+                  depart_airport="EZE", return_airport="EZE")
+    (text, idx), = telegram_alert_chunks(cfg, [c], slot="night", followups=_followups()[:2])
+    assert idx == [0]
+    assert text.splitlines() == [
+        "Hallazgos de la mañana:",
+        "El hallazgo I) de la mañana mantiene su precio",
+        "El hallazgo II) de la mañana subió a USD 352 por persona",
+        "",
+        "Hallazgos nuevos:",
+        "I) EZE --> GIG 25/01 al 05/02 (11 días) - 300USD por persona - JetSMART",
+        "Reserva: sin link disponible",
+    ]

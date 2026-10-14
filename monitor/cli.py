@@ -1,4 +1,5 @@
-"""Punto de entrada: python -m monitor [--dry-run] [--full-scan] [--test-alert] [--demo-alert]."""
+"""Punto de entrada: python -m monitor [--slot auto|morning|night] [--dry-run] [--full-scan] [--test-alert]
+[--demo-alert]."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from .alerts import LogNotifier, build_notifier
 from .alerts.format import error_message, test_message
 from .config import ConfigError, Secrets, load_config
 from .logsetup import setup_logging
-from .runner import Runner, utcnow
+from .runner import Runner, slot_for, utcnow
 from .sources import make_source
 from .storage import Store
 
@@ -25,6 +26,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--test-alert", action="store_true", help="envía un mensaje de prueba por ambos canales y termina")
     p.add_argument("--demo-alert", action="store_true",
                    help="envía alertas simuladas (un email y un mensaje de Telegram) para ver el formato y termina")
+    p.add_argument("--slot", choices=["auto", "morning", "night"], default="auto",
+                   help="corrida de la mañana (top + rotación) o de la noche (seguimiento + fechas nuevas); "
+                        "auto = night desde las 14:00 hora argentina")
     p.add_argument("-v", "--verbose", action="store_true", help="logging detallado")
     return p.parse_args(argv)
 
@@ -69,7 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     notifier = LogNotifier() if args.dry_run else build_notifier(cfg, secrets)
     try:
         runner = Runner(cfg, store, make_source(cfg, secrets), notifier, dry_run=args.dry_run, usage=usage)
-        return runner.run(full_scan=args.full_scan)
+        slot = slot_for(utcnow()) if args.slot == "auto" else args.slot
+        log.info("Corrida: %s", slot)
+        return runner.run(full_scan=args.full_scan, slot=slot)
     except Exception as exc:  # noqa: BLE001 - avisar siempre ante un fallo inesperado
         log.exception("La corrida falló")
         notifier.send(*error_message(utcnow(), f"{type(exc).__name__}. Ver el log del workflow.",

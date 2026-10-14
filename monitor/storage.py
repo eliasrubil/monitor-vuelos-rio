@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT NOT NULL,
     finished_at TEXT,
-    mode TEXT NOT NULL,                 -- full | incremental
+    mode TEXT NOT NULL,                 -- full | incremental | night
+    slot TEXT,                          -- morning | night (NULL en corridas anteriores = morning)
     status TEXT NOT NULL,               -- running | ok | partial | skipped_budget
     planned_queries INTEGER NOT NULL DEFAULT 0,
     executed_queries INTEGER NOT NULL DEFAULT 0,
@@ -108,7 +109,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     price_pp REAL NOT NULL,
     price_total REAL NOT NULL,
     rules TEXT NOT NULL,
-    channels TEXT NOT NULL
+    channels TEXT NOT NULL,
+    label INTEGER                       -- número del hallazgo en el mail de la corrida (I, II, ...)
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_itin ON alerts(destination, depart_date, return_date);
 
@@ -125,7 +127,11 @@ CREATE TABLE IF NOT EXISTS migrations (
 # para que el tope mensual siga contando lo ya consumido. La base anterior queda en el historial de git.
 RESET_MIGRATION = "2026-10-08_reset_bue"
 RESET_TABLES = ("observations", "pair_state", "dest_state", "alerts")
-NEW_COLUMNS = {"observations": {"depart_airport": "TEXT", "return_airport": "TEXT"}}
+NEW_COLUMNS = {
+    "observations": {"depart_airport": "TEXT", "return_airport": "TEXT"},
+    "runs": {"slot": "TEXT"},
+    "alerts": {"label": "INTEGER"},
+}
 
 
 def iso(ts: dt.datetime) -> str:
@@ -215,11 +221,21 @@ class Store:
         self.conn.close()
 
     # ---------------------------------------------------------------- runs
-    def start_run(self, now: dt.datetime, mode: str) -> int:
+    def start_run(self, now: dt.datetime, mode: str, slot: Optional[str] = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO runs (started_at, mode, status) VALUES (?, ?, 'running')", (iso(now), mode)
+            "INSERT INTO runs (started_at, mode, slot, status) VALUES (?, ?, ?, 'running')", (iso(now), mode, slot)
         )
         return int(cur.lastrowid)
+
+    def last_morning_run(self, since: dt.datetime) -> Optional[tuple[int, dt.datetime]]:
+        """La última corrida de la mañana terminada desde `since`: (id, inicio)."""
+        r = self.conn.execute(
+            """SELECT id, started_at FROM runs
+               WHERE COALESCE(slot, 'morning') = 'morning' AND status IN ('ok', 'partial') AND started_at >= ?
+               ORDER BY id DESC LIMIT 1""",
+            (iso(since),),
+        ).fetchone()
+        return (int(r["id"]), parse_ts(r["started_at"])) if r else None
 
     def finish_run(self, run_id: int, now: dt.datetime, status: str, **counts) -> None:
         allowed = {"planned_queries", "executed_queries", "saved_queries", "billable_requests", "alerts_sent", "notes"}
@@ -400,13 +416,20 @@ class Store:
     def record_alert(
         self, run_id: int, now: dt.datetime, origin: str, destination: str, depart: dt.date, ret: dt.date,
         price_pp: float, price_total: float, rules: Iterable[str], channels: Iterable[str],
+        label: Optional[int] = None,
     ) -> None:
         self.conn.execute(
             """INSERT INTO alerts (run_id, ts_utc, origin, destination, depart_date, return_date, price_pp,
-                   price_total, rules, channels) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   price_total, rules, channels, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (run_id, iso(now), origin, destination, depart.isoformat(), ret.isoformat(), price_pp, price_total,
-             ",".join(rules), ",".join(channels)),
+             ",".join(rules), ",".join(channels), label),
         )
+
+    def run_alerts(self, run_id: int) -> list[sqlite3.Row]:
+        """Alertas registradas por una corrida, por número de hallazgo y fecha."""
+        return self.conn.execute(
+            "SELECT * FROM alerts WHERE run_id = ? ORDER BY label, depart_date, return_date", (run_id,)
+        ).fetchall()
 
 
 def _row_to_pair_state(r: sqlite3.Row) -> PairState:

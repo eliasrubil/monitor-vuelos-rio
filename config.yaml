@@ -40,10 +40,13 @@ ignav:
   allow_self_transfer: true    # default de la API
 
 budget:
-  max_requests_per_month: 2500 # si la corrida lo superaría, se saltea y se avisa
+  # Mañana ~45 + noche ~90 consultas por día (más links de reserva) ≈ 4.200 por mes.
+  max_requests_per_month: 4500 # si la corrida lo superaría, se saltea y se avisa
   dry_run_max_queries: 4       # tope de consultas de un dry-run (se cobran y se suman al contador)
 
 optimization:
+  # Corrida de la mañana. La de la noche vuelve a consultar los hallazgos de la mañana y barre todas las
+  # fechas que la mañana no consultó (así cada fecha se revisa todos los días).
   top_k: 8                     # pares de fechas más baratos por destino que se consultan siempre
   rotating_k: 5                # pares extra del resto, el dato más viejo primero
   max_staleness_runs: 6        # ningún par queda más de N corridas (de su destino) sin actualizar
@@ -70,7 +73,7 @@ detection:
 alerts:
   telegram: true
   email: true
-  summary_telegram: true       # resumen de la corrida por Telegram; el email lleva solo las alertas (uno por día)
+  summary_telegram: true       # resumen de cada corrida por Telegram; el email lleva solo las alertas (uno por corrida)
   summary_top_n: 5
   booking_links: true          # pide el link de reserva solo para itinerarios alertados
 

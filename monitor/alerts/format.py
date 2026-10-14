@@ -15,6 +15,11 @@ STATS_TITLE = ">>STATS<<"
 TELEGRAM_MAX_CHARS = 4000   # Telegram admite 4096 caracteres por mensaje
 WEEKDAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
+SLOT_MORNING = "morning"
+SLOT_NIGHT = "night"
+# Cómo se nombra cada corrida en el título del mail y en Telegram.
+SLOT_TITLES = {SLOT_MORNING: "Morning Sunshine!", SLOT_NIGHT: "Night Owl!"}
+
 
 @dataclass
 class Candidate:
@@ -51,6 +56,44 @@ class Candidate:
     @property
     def duration(self) -> int:
         return (self.ret - self.depart).days
+
+
+@dataclass
+class FollowUp:
+    """Seguimiento nocturno de un hallazgo de la mañana."""
+
+    label: int                  # número del hallazgo en el mail de la mañana
+    origin: str
+    destination: str
+    depart: dt.date
+    ret: dt.date
+    morning_price_pp: float
+    status: str = "error"       # same | up | down | gone | error
+    price_pp: Optional[float] = None
+
+
+def roman(n: int) -> str:
+    """1 -> I, 4 -> IV, 12 -> XII."""
+    out = ""
+    for value, sym in ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"), (50, "L"),
+                       (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")):
+        while n >= value:
+            out += sym
+            n -= value
+    return out
+
+
+def followup_line(f: FollowUp, currency: str = "USD") -> str:
+    head = f"El hallazgo {roman(f.label)}) de la mañana"
+    if f.status == "same":
+        return f"{head} mantiene su precio"
+    if f.status == "up":
+        return f"{head} subió a {money(f.price_pp, currency)} por persona"
+    if f.status == "down":
+        return f"{head} bajó a {money(f.price_pp, currency)} por persona"
+    if f.status == "gone":
+        return f"{head} ya no aparece"
+    return f"{head} no se pudo verificar"
 
 
 def ar_time(ts: dt.datetime) -> str:
@@ -129,11 +172,31 @@ EMAIL_TIP = ("Qué hacer si el link ya no funciona o la tarifa se agotó: buscá
              "de la aerolínea que figura en la alerta. Muchas veces la tarifa sigue o hay una muy parecida.")
 
 
-def alerts_email(cfg: Config, messages: list[tuple[str, str]]) -> tuple[str, str]:
-    """El email diario: todas las alertas (ya ordenadas por precio por persona) y la aclaración al final."""
-    n = len(messages)
-    subject = f"{EMAIL_SUBJECT} - {n} {'hallazgo' if n == 1 else 'hallazgos'}"
-    body = "\n\n".join(f"{s}\n{'-' * min(len(s), 60)}\n{t}" for s, t in messages)
+def _count(n: int, new: bool) -> str:
+    word = "hallazgo" if n == 1 else "hallazgos"
+    if not new:
+        return f"{n} {word}"
+    return "sin hallazgos nuevos" if n == 0 else f"{n} {word} {'nuevo' if n == 1 else 'nuevos'}"
+
+
+def alerts_email(cfg: Config, messages: list[tuple[str, str]], slot: str = SLOT_MORNING,
+                 followups: Optional[list[FollowUp]] = None) -> tuple[str, str]:
+    """El email de cada corrida: las alertas numeradas I), II), ... (ya ordenadas por precio por persona) y la
+    aclaración al final. El de la noche empieza con el estado de los hallazgos de la mañana."""
+    night = slot == SLOT_NIGHT
+    subject = f"{EMAIL_SUBJECT} - {SLOT_TITLES[slot]} - {_count(len(messages), night)}"
+    alerts = "\n\n".join(
+        f"{roman(i)}) {s}\n{'-' * min(len(s) + len(roman(i)) + 2, 60)}\n{t}" for i, (s, t) in enumerate(messages, 1)
+    )
+    if night:
+        parts = []
+        if followups:
+            parts.append("Hallazgos de la mañana\n" + "\n".join(followup_line(f, cfg.search.currency)
+                                                                  for f in followups))
+        parts.append("Hallazgos nuevos\n\n" + alerts if messages else "Sin hallazgos nuevos.")
+        body = f"\n\n{'=' * 60}\n".join(parts)
+    else:
+        body = alerts
     return subject, f"{body}\n\n{'=' * 60}\n{EMAIL_TIP}"
 
 
@@ -142,9 +205,10 @@ def airline_names(cfg: Config, c: Candidate) -> str:
     return ", ".join(cfg.airline(code) for code in codes) or "s/d"
 
 
-def telegram_alert_entry(cfg: Config, c: Candidate) -> str:
+def telegram_alert_entry(cfg: Config, c: Candidate, label: Optional[int] = None) -> str:
     amount = f"{c.price_pp:,.0f}".replace(",", ".")
-    line = (f"{c.shown_origin} --> {c.destination} {c.depart:%d/%m} al {c.ret:%d/%m} ({c.duration} días) - "
+    prefix = f"{roman(label)}) " if label else ""
+    line = (f"{prefix}{c.shown_origin} --> {c.destination} {c.depart:%d/%m} al {c.ret:%d/%m} ({c.duration} días) - "
             f"{amount}{c.currency} por persona")
     if c.same_price_count:
         line += f" (+{same_price_text(c)})"
@@ -152,18 +216,28 @@ def telegram_alert_entry(cfg: Config, c: Candidate) -> str:
     return "\n".join([line] + booking_lines(c))
 
 
-def telegram_alert_chunks(cfg: Config, cands: list[Candidate], max_chars: int = TELEGRAM_MAX_CHARS) -> list[tuple[str, list[int]]]:
-    """Todas las alertas en un único mensaje; si supera el límite de Telegram, se parte en varios mensajes sin
-    cortar ninguna alerta. Devuelve (texto, índices de las alertas que contiene)."""
+def telegram_alert_chunks(cfg: Config, cands: list[Candidate], max_chars: int = TELEGRAM_MAX_CHARS,
+                          slot: str = SLOT_MORNING, followups: Optional[list[FollowUp]] = None,
+                          ) -> list[tuple[str, list[int]]]:
+    """Todas las alertas, numeradas, en un único mensaje; si supera el límite de Telegram, se parte en varios
+    mensajes sin cortar ninguna alerta. El de la noche empieza con el estado de los hallazgos de la mañana.
+    Devuelve (texto, índices de las alertas que contiene)."""
+    blocks: list[tuple[str, Optional[int]]] = []
+    if slot == SLOT_NIGHT:
+        if followups:
+            blocks.append(("Hallazgos de la mañana:\n" + "\n".join(followup_line(f, cfg.search.currency)
+                                                                    for f in followups), None))
+        blocks.append(("\nHallazgos nuevos:" if cands else "\nSin hallazgos nuevos.", None))
+    blocks += [(telegram_alert_entry(cfg, c, i + 1), i) for i, c in enumerate(cands)]
     chunks: list[tuple[str, list[int]]] = []
     text, idx = "", []
-    for i, c in enumerate(cands):
-        entry = telegram_alert_entry(cfg, c)
-        if text and len(text) + 1 + len(entry) > max_chars:
+    for block, i in blocks:
+        if text and len(text) + 1 + len(block) > max_chars:
             chunks.append((text, idx))
             text, idx = "", []
-        text = f"{text}\n{entry}" if text else entry
-        idx.append(i)
+        text = f"{text}\n{block}" if text else block.lstrip("\n")
+        if i is not None:
+            idx.append(i)
     if text:
         chunks.append((text, idx))
     return chunks
@@ -199,8 +273,9 @@ def summary_message(
     top: list[TopItem],
     destinations: list[DestinationSummary],
     notes: list[str],
+    slot: str = SLOT_MORNING,
 ) -> tuple[str, str]:
-    subject = f"Resumen vuelos {now.astimezone(AR_TZ):%d/%m/%Y}: " + (
+    subject = f"Resumen vuelos {now.astimezone(AR_TZ):%d/%m/%Y} {SLOT_TITLES[slot]}: " + (
         f"mejor {top[0].destination} {money(top[0].price_pp, cfg.search.currency)} pp" if top else "sin precios"
     )
     lines = [

@@ -2,9 +2,15 @@ name: Monitor de vuelos
 
 on:
   schedule:
-    - cron: "0 11 * * *"   # 11:00 UTC = 08:00 Argentina
+    - cron: "0 11 * * *"   # 11:00 UTC = 08:00 Argentina: corrida de la mañana (Morning Sunshine!)
+    - cron: "0 23 * * *"   # 23:00 UTC = 20:00 Argentina: corrida de la noche (Night Owl!)
   workflow_dispatch:
     inputs:
+      slot:
+        description: "Corrida: auto (según la hora argentina: noche desde las 14:00), morning o night"
+        type: choice
+        options: [auto, morning, night]
+        default: auto
       dry_run:
         description: "Dry run: hasta dry_run_max_queries consultas; no guarda precios ni alerta (sí suma al contador de uso)"
         type: boolean
@@ -32,7 +38,7 @@ permissions:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60     # la corrida de la noche barre ~90 consultas (~20 s cada una)
     steps:
       - uses: actions/checkout@v4
 
@@ -56,8 +62,9 @@ jobs:
           IN_FULL_SCAN: ${{ inputs.full_scan }}
           IN_TEST_ALERT: ${{ inputs.test_alert }}
           IN_DEMO_ALERT: ${{ inputs.demo_alert }}
+          IN_SLOT: ${{ inputs.slot }}
         run: |
-          args=()
+          args=(--slot "${IN_SLOT:-auto}")
           if [ "$IN_DEMO_ALERT" = "true" ]; then args+=(--demo-alert); fi
           if [ "$IN_TEST_ALERT" = "true" ]; then args+=(--test-alert); fi
           if [ "$IN_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
@@ -79,6 +86,6 @@ jobs:
             exit 0
           fi
           if [ "$IN_DRY_RUN" = "true" ]; then what="uso dry-run"; else what="precios"; fi
-          git commit -m "data: ${what} $(date -u +%F) [skip ci]"
+          git commit -m "data: ${what} $(TZ=America/Argentina/Buenos_Aires date '+%F %H:%M') [skip ci]"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"

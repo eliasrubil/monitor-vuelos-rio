@@ -10,7 +10,11 @@ from typing import Callable, Optional
 
 from .alerts.channels import Notifier
 from .alerts.format import (
+    AR_TZ,
+    SLOT_MORNING,
+    SLOT_NIGHT,
     Candidate,
+    FollowUp,
     DestinationSummary,
     TopItem,
     alert_message,
@@ -22,7 +26,7 @@ from .alerts.format import (
 )
 from .config import Config
 from .detection import Evaluation, evaluate, passes_antispam
-from .planner import Plan, PlannedQuery, plan_run
+from .planner import Plan, PlannedQuery, plan_night, plan_run
 from .sources.base import STATUS_NO_RESULTS, STATUS_OK, PriceSource, SearchOutcome, SearchQuery
 from .storage import PairState, Store
 
@@ -31,6 +35,19 @@ log = logging.getLogger(__name__)
 
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+NIGHT_FROM_HOUR_AR = 14   # con --slot auto, una corrida que arranca desde las 14:00 hora argentina es la de la noche
+
+
+def slot_for(now: dt.datetime) -> str:
+    return SLOT_NIGHT if now.astimezone(AR_TZ).hour >= NIGHT_FROM_HOUR_AR else SLOT_MORNING
+
+
+def ar_day_start(now: dt.datetime) -> dt.datetime:
+    """00:00 hora argentina del día de `now`."""
+    local = now.astimezone(AR_TZ)
+    return local.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 class Runner:
@@ -57,7 +74,9 @@ class Runner:
         self.notes: list[str] = []
 
     # ------------------------------------------------------------------ run
-    def run(self, full_scan: bool = False) -> int:
+    def run(self, full_scan: bool = False, slot: str = SLOT_MORNING) -> int:
+        """slot: morning (top_k + rotación) o night (seguimiento de los hallazgos de la mañana + barrido de
+        las fechas que la mañana no consultó)."""
         cfg = self.cfg
         now = self.clock()
         stop_after = cfg.schedule.stop_after
@@ -73,7 +92,24 @@ class Runner:
             log.warning("open_jaw: true, pero la fuente %s no lo soporta; se consultan solo ida y vuelta.",
                         self.source.name)
 
-        plan = plan_run(cfg, self.store, origins, now, full_scan=full_scan)
+        followups: list[FollowUp] = []
+        morning_pairs: set[tuple[str, dt.date, dt.date]] = set()
+        if slot == SLOT_NIGHT:
+            day_start = ar_day_start(now)
+            morning = self.store.last_morning_run(day_start)
+            if morning:
+                followups, morning_pairs = self._morning_findings(morning[0])
+                log.info("Corrida de la noche: %d hallazgos de la mañana para seguir; se barren las fechas no "
+                         "consultadas desde las %s", len(followups), morning[1].astimezone(AR_TZ).strftime("%H:%M"))
+            else:
+                log.info("Corrida de la noche sin corrida de la mañana hoy: se barren todas las fechas no "
+                         "consultadas en el día")
+            since = morning[1] if morning else day_start
+        if slot == SLOT_NIGHT and not full_scan:
+            keys = {(f.origin, f.destination, f.depart, f.ret) for f in followups}
+            plan = plan_night(cfg, self.store, origins, now, since, keys)
+        else:
+            plan = plan_run(cfg, self.store, origins, now, full_scan=full_scan)
         self._log_plan(plan)
         if self.dry_run:
             planned = len(plan.queries)
@@ -96,8 +132,8 @@ class Runner:
                 self.store.commit()
             return 0
 
-        mode = "full" if plan.is_full else "incremental"
-        run_id = self.store.start_run(now, mode)
+        mode = "full" if plan.is_full else ("night" if slot == SLOT_NIGHT else "incremental")
+        run_id = self.store.start_run(now, mode, slot)
         # En dry-run, la corrida se registra aparte en la base real solo para el contador de uso.
         separate_usage = self.usage is not self.store
         usage_run_id = self.usage.start_run(now, "dry_run") if separate_usage else run_id
@@ -108,8 +144,12 @@ class Runner:
         billable = 0
         fatal_error = None
         executed = 0
+        followup_outcomes: dict[tuple[str, str, dt.date, dt.date], SearchOutcome] = {}
+        follow_keys = {(f.origin, f.destination, f.depart, f.ret) for f in followups}
         for q in plan.queries:
             outcome = self.source.search_round_trip(self._search_query(q))
+            if (q.origin, q.destination, q.depart, q.ret) in follow_keys:
+                followup_outcomes[(q.origin, q.destination, q.depart, q.ret)] = outcome
             executed += 1
             statuses[outcome.status] += 1
             billable += int(outcome.billable)
@@ -130,9 +170,11 @@ class Runner:
         if statuses["error"]:
             self.notes.append(f"{statuses['error']} consultas con error")
 
-        groups = self._group_same_price(self._detect(run_id, now))
+        self._resolve_followups(followups, followup_outcomes)
+        # Los hallazgos de la mañana se informan como seguimiento; a la noche solo alertan fechas nuevas.
+        groups = self._group_same_price(self._detect(run_id, now, skip=morning_pairs))
         billable += self._fetch_booking_links(run_id, [members[0] for members in groups], now)
-        sent = self._send_alerts(run_id, groups)
+        sent = self._send_alerts(run_id, groups, slot, followups)
 
         if fatal_error:
             self.notes.append(f"Error fatal de la fuente: {fatal_error}")
@@ -142,7 +184,7 @@ class Runner:
         saved = plan.universe - executed
         month_total = self.usage.month_requests(now)
         if self.cfg.alerts.summary_telegram:
-            self._send_summary(now, mode, executed, saved, month_total, sent, plan)
+            self._send_summary(now, mode, executed, saved, month_total, sent, plan, slot)
 
         status = "ok" if not fatal_error and not statuses["error"] else "partial"
         counts = dict(planned_queries=estimated, executed_queries=executed, saved_queries=saved,
@@ -235,12 +277,44 @@ class Runner:
             )
         return [best[k] for k in sorted(best)]
 
-    def _detect(self, run_id: int, now: dt.datetime) -> list[tuple[Candidate, Evaluation]]:
+    def _morning_findings(self, run_id: int) -> tuple[list[FollowUp], set[tuple[str, dt.date, dt.date]]]:
+        """Hallazgos del mail de la mañana: uno por número (la primera fecha de cada grupo de mismo precio) y
+        todas las fechas alertadas, que a la noche no vuelven a alertar como nuevas."""
+        followups: dict[int, FollowUp] = {}
+        pairs = set()
+        for r in self.store.run_alerts(run_id):
+            depart, ret = dt.date.fromisoformat(r["depart_date"]), dt.date.fromisoformat(r["return_date"])
+            pairs.add((r["destination"], depart, ret))
+            if r["label"] is not None and r["label"] not in followups:
+                followups[r["label"]] = FollowUp(r["label"], r["origin"], r["destination"], depart, ret,
+                                                 float(r["price_pp"]))
+        return [followups[k] for k in sorted(followups)], pairs
+
+    @staticmethod
+    def _resolve_followups(followups: list[FollowUp], outcomes: dict) -> None:
+        for f in followups:
+            out = outcomes.get((f.origin, f.destination, f.depart, f.ret))
+            if out is None or out.status not in (STATUS_OK, STATUS_NO_RESULTS):
+                f.status = "error"
+            elif out.status == STATUS_NO_RESULTS:
+                f.status = "gone"
+            else:
+                f.price_pp = out.quote.price_pp
+                # Se compara en dólares enteros, como se muestra en los mensajes.
+                diff = round(f.price_pp) - round(f.morning_price_pp)
+                f.status = "same" if diff == 0 else ("up" if diff > 0 else "down")
+            log.info("Seguimiento %s %s/%s: %s (mañana %.0f, ahora %s)", f.destination, f.depart, f.ret, f.status,
+                     f.morning_price_pp, "-" if f.price_pp is None else f"{f.price_pp:.0f}")
+
+    def _detect(self, run_id: int, now: dt.datetime, skip: frozenset | set = frozenset(),
+                ) -> list[tuple[Candidate, Evaluation]]:
         det = self.cfg.detection
         windows = {}
         alerts = []
         excluded = set(self.cfg.search.airlines_exclude)
         for c in self._candidates(run_id):
+            if (c.destination, c.depart, c.ret) in skip:
+                continue
             if excluded & {a.strip() for a in c.airlines.split(",")}:
                 # Red de seguridad: la fuente ya las filtra, pero nunca se alerta por una aerolínea excluida.
                 log.warning("%s %s/%s: aerolínea excluida (%s), no se evalúa", c.destination, c.depart, c.ret,
@@ -309,18 +383,21 @@ class Runner:
                 break
         return billable
 
-    def _send_alerts(self, run_id: int, groups: list[list[tuple[Candidate, Evaluation]]]) -> int:
+    def _send_alerts(self, run_id: int, groups: list[list[tuple[Candidate, Evaluation]]],
+                     slot: str = SLOT_MORNING, followups: Optional[list[FollowUp]] = None) -> int:
         """Telegram: todas las alertas en un único mensaje (partido si supera el límite). Email: un mensaje con
-        todas. Cada grupo de mismo precio se avisa una vez, pero se registra para todas sus fechas (anti-spam)."""
-        if not groups:
+        todas. Las alertas van numeradas I), II), ... y el número queda registrado para el seguimiento de la
+        noche. A la noche, ambos empiezan con el estado de los hallazgos de la mañana. Cada grupo de mismo
+        precio se avisa una vez, pero se registra para todas sus fechas (anti-spam)."""
+        if not groups and not followups:
             return 0
         leads = [members[0] for members in groups]
         telegram_ok: set[int] = set()
-        for text, indices in telegram_alert_chunks(self.cfg, [c for c, _ in leads]):
+        for text, indices in telegram_alert_chunks(self.cfg, [c for c, _ in leads], slot=slot, followups=followups):
             if self.notifier.send("", text, only={"telegram"}):
                 telegram_ok.update(indices)
         messages = [alert_message(self.cfg, c, ev) for c, ev in leads]
-        email_ok = self.notifier.send(*alerts_email(self.cfg, messages), only={"email"})
+        email_ok = self.notifier.send(*alerts_email(self.cfg, messages, slot, followups), only={"email"})
         sent = 0
         for i, members in enumerate(groups):
             channels = (["telegram"] if i in telegram_ok else []) + email_ok
@@ -329,13 +406,13 @@ class Runner:
             sent += 1
             for c, ev in members:
                 self.store.record_alert(run_id, self.clock(), c.origin, c.destination, c.depart, c.ret, c.price_pp,
-                                        c.price_total, ev.rules, channels)
+                                        c.price_total, ev.rules, channels, label=i + 1)
         if sent < len(groups) and not self.dry_run:
             log.error("%d alertas no se pudieron enviar por ningún canal", len(groups) - sent)
         return sent
 
     def _send_summary(self, now: dt.datetime, mode: str, executed: int, saved: int, month_total: int, sent: int,
-                      plan: Plan) -> None:
+                      plan: Plan, slot: str = SLOT_MORNING) -> None:
         top: list[TopItem] = []
         dests = []
         for dp in plan.destinations:
@@ -350,4 +427,4 @@ class Runner:
         top.sort(key=lambda t: (t.price_pp, t.destination, t.depart, t.ret))
         top = top[: self.cfg.alerts.summary_top_n]
         self.notifier.send(*summary_message(self.cfg, now, mode, executed, saved, month_total, sent, top, dests,
-                                            self.notes), only={"telegram"})
+                                            self.notes, slot), only={"telegram"})
