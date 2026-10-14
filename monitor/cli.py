@@ -75,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
         runner = Runner(cfg, store, make_source(cfg, secrets), notifier, dry_run=args.dry_run, usage=usage)
         slot = slot_for(utcnow()) if args.slot == "auto" else args.slot
         log.info("Corrida: %s", slot)
-        return runner.run(full_scan=args.full_scan, slot=slot)
+        # Con --slot auto (las programadas), un turno que ya corrió hoy no se repite. Elegir morning o night a
+        # mano siempre corre: sirve para adelantar un turno, y la corrida programada de ese turno se saltea.
+        return runner.run(full_scan=args.full_scan, slot=slot, once_per_day=args.slot == "auto")
     except Exception as exc:  # noqa: BLE001 - avisar siempre ante un fallo inesperado
         log.exception("La corrida falló")
         notifier.send(*error_message(utcnow(), f"{type(exc).__name__}. Ver el log del workflow.",

@@ -205,6 +205,9 @@ cualquier valor secreto que aparezca en un mensaje de log.
 3. El workflow **Monitor de vuelos** corre todos los días a las **08:00** (mañana) y a las **20:00** (noche),
    hora argentina (11:00 y 23:00 UTC). GitHub puede demorar los cron unos minutos en horarios de mucha carga.
    Con `slot: auto`, una corrida manual desde las 14:00 hora argentina se toma como la de la noche.
+   **Adelantar un turno:** una corrida manual con `slot: night` (o `morning`) cuenta como el turno de ese día,
+   así que la corrida programada de ese turno se saltea (no consulta ni manda nada). Al día siguiente todo
+   sigue normal.
 4. Necesita permiso de escritura para commitear la base. Ya está declarado (`permissions: contents: write`).
    Si tu organización lo restringe, habilitalo en **Settings → Actions → General → Workflow permissions →
    Read and write permissions**.

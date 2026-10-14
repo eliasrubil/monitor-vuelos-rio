@@ -516,3 +516,28 @@ def test_night_without_morning_run_sweeps_dates_not_seen_today(big_cfg, notifier
     src = FakeSource(constant_prices())
     _run_slot(cfg, src, notifier, clock, "night")            # todo ya se consultó hoy
     assert src.calls == []
+
+
+def test_manual_night_run_replaces_the_scheduled_one(cfg, notifier, channels, clock):
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)              # línea base (barrido completo)
+    clock.advance()
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)              # 08:00, corrida normal
+    clock.now += dt.timedelta(hours=5, minutes=20)                             # 13:20: noche adelantada a mano
+    store = Store.open(cfg.database.path)
+    src = FakeSource(constant_prices())
+    Runner(cfg, store, src, notifier, clock=clock).run(slot="night")
+    assert src.calls
+    clock.now += dt.timedelta(hours=6, minutes=40)                             # 20:00: la programada no se repite
+    src = FakeSource(constant_prices())
+    sent_before = len(channels["telegram"].sent)
+    assert Runner(cfg, store, src, notifier, clock=clock).run(slot="night", once_per_day=True) == 0
+    assert src.calls == [] and len(channels["telegram"].sent) == sent_before
+    clock.now += dt.timedelta(hours=12)                                        # 08:00 del día siguiente: normal
+    src = FakeSource(constant_prices())
+    Runner(cfg, store, src, notifier, clock=clock).run(slot="morning", once_per_day=True)
+    assert src.calls
+    clock.now += dt.timedelta(hours=12)                                        # 20:00 del día siguiente: normal
+    src = FakeSource(constant_prices())
+    Runner(cfg, store, src, notifier, clock=clock).run(slot="night", once_per_day=True)
+    assert src.calls
+    store.close()

@@ -227,15 +227,18 @@ class Store:
         )
         return int(cur.lastrowid)
 
-    def last_morning_run(self, since: dt.datetime) -> Optional[tuple[int, dt.datetime]]:
-        """La última corrida de la mañana terminada desde `since`: (id, inicio)."""
+    def last_run(self, slot: str, since: dt.datetime) -> Optional[tuple[int, dt.datetime]]:
+        """La última corrida terminada de ese turno (morning | night) desde `since`: (id, inicio)."""
         r = self.conn.execute(
             """SELECT id, started_at FROM runs
-               WHERE COALESCE(slot, 'morning') = 'morning' AND status IN ('ok', 'partial') AND started_at >= ?
+               WHERE COALESCE(slot, 'morning') = ? AND status IN ('ok', 'partial') AND started_at >= ?
                ORDER BY id DESC LIMIT 1""",
-            (iso(since),),
+            (slot, iso(since)),
         ).fetchone()
         return (int(r["id"]), parse_ts(r["started_at"])) if r else None
+
+    def last_morning_run(self, since: dt.datetime) -> Optional[tuple[int, dt.datetime]]:
+        return self.last_run("morning", since)
 
     def finish_run(self, run_id: int, now: dt.datetime, status: str, **counts) -> None:
         allowed = {"planned_queries", "executed_queries", "saved_queries", "billable_requests", "alerts_sent", "notes"}

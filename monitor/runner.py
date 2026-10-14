@@ -74,15 +74,23 @@ class Runner:
         self.notes: list[str] = []
 
     # ------------------------------------------------------------------ run
-    def run(self, full_scan: bool = False, slot: str = SLOT_MORNING) -> int:
+    def run(self, full_scan: bool = False, slot: str = SLOT_MORNING, once_per_day: bool = False) -> int:
         """slot: morning (top_k + rotación) o night (seguimiento de los hallazgos de la mañana + barrido de
-        las fechas que la mañana no consultó)."""
+        las fechas que la mañana no consultó).
+        once_per_day: si ese turno ya corrió hoy (hora argentina), no se hace nada. Lo usan las corridas
+        automáticas, así una corrida manual adelantada reemplaza a la programada del mismo turno."""
         cfg = self.cfg
         now = self.clock()
         stop_after = cfg.schedule.stop_after
         if stop_after and now.date() > stop_after:
             log.info("Hoy (%s) es posterior a stop_after (%s): no se consulta nada.", now.date(), stop_after)
             return 0
+        if once_per_day and not self.dry_run:
+            done = self.store.last_run(slot, ar_day_start(now))
+            if done:
+                log.info("El turno %s de hoy ya corrió (corrida %d, %s): no se repite.", slot, done[0],
+                         done[1].astimezone(AR_TZ).strftime("%H:%M hora argentina"))
+                return 0
         if self.dry_run:
             log.info("Modo dry-run: se consulta la API (las requests se cuentan en el uso mensual), pero no se "
                      "guardan precios ni se envían alertas.")
