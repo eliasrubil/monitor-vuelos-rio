@@ -224,7 +224,8 @@ def test_demo_sends_morning_and_night(cfg):
     text = tg.sent[0][1]
     assert text.startswith("[PRUEBA - valores simulados]\nI) EZE --> GIG 15/01 al 25/01 (10 días) - 349USD por persona "
                            "(+2 fechas más con el mismo precio) - JetSMART\n")
-    assert "III) AEP/EZE --> CFB" in text and "Reserva Ida:" in text and "II) EZE --> GRU" in text
+    assert "III) AEP/EZE --> GIG" in text and "Reserva Ida:" in text and "II) EZE --> GRU" in text
+    assert "CFB" not in text
     assert mail.sent[0][0] == f"[PRUEBA - valores simulados] {EMAIL_SUBJECT} - Morning Sunshine! - 3 hallazgos"
     assert mail.sent[1][0] == f"[PRUEBA - valores simulados] {EMAIL_SUBJECT} - Night Owl! - 1 hallazgo nuevo"
     night = mail.sent[1][1]

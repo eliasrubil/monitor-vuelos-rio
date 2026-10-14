@@ -9,9 +9,11 @@ search:
   # combinaciones mixtas, p. ej. ida desde EZE y vuelta a AEP). El aeropuerto real se lee de cada tramo.
   origins: [BUE]
   # Río = solo GIG (no se usa el código de ciudad RIO porque incluye SDU). São Paulo = solo GRU.
-  destinations: [GIG, GRU, CFB]
+  # Cabo Frío (CFB) se dio de baja el 14/10/2026: promedio ~USD 400 más caro por persona que Río y pocas fechas
+  # con vuelos. Su historial queda en la base.
+  destinations: [GIG, GRU]
   # Ida y vuelta siempre al mismo destino. open_jaw: true habilitaría combinaciones
-  # tipo ida GIG / vuelta CFB, pero requiere un adaptador que lo soporte (Ignav todavía no).
+  # tipo ida GIG / vuelta GRU, pero requiere un adaptador que lo soporte (Ignav todavía no).
   open_jaw: false
   departure_from: 2027-01-13   # fecha de ida >= esta
   return_until: 2027-02-06     # fecha de vuelta <= esta
@@ -40,19 +42,22 @@ ignav:
   allow_self_transfer: true    # default de la API
 
 budget:
-  # Mañana ~45 + noche ~90 consultas por día (más links de reserva) ≈ 4.200 por mes.
+  # GIG + GRU: mañana ~50 + noche ~70 consultas por día (más links de reserva) ≈ 3.800 por mes.
   max_requests_per_month: 4500 # si la corrida lo superaría, se saltea y se avisa
   dry_run_max_queries: 4       # tope de consultas de un dry-run (se cobran y se suman al contador)
 
 optimization:
   # Corrida de la mañana. La de la noche vuelve a consultar los hallazgos de la mañana y barre todas las
   # fechas que la mañana no consultó (así cada fecha se revisa todos los días).
-  top_k: 8                     # pares de fechas más baratos por destino que se consultan siempre
-  rotating_k: 5                # pares extra del resto, el dato más viejo primero
+  # Con CFB dado de baja, sus consultas se reasignan a GIG y GRU: más fechas por la mañana y, a la noche,
+  # una segunda revisión de las más baratas (de donde salen casi todas las alertas).
+  top_k: 12                    # pares de fechas más baratos por destino que se consultan siempre
+  rotating_k: 10               # pares extra del resto, el dato más viejo primero
+  night_top_k: 12              # a la noche se vuelven a consultar los N pares más baratos de cada destino
   max_staleness_runs: 6        # ningún par queda más de N corridas (de su destino) sin actualizar
   no_service_after_empty_runs: 2
   recheck_days: 14             # cada cuánto se reconsulta un par marcado no_service
-  reduced_destinations: []     # sin modo reducido: GRU se consulta todos los días como GIG y CFB (antes [GRU])
+  reduced_destinations: []     # sin modo reducido: GRU se consulta todos los días como GIG (antes [GRU])
   reduced_interval_days: 2     # solo aplica a destinos en reduced_destinations
   reduced_reference_destination: GIG
   gru_margin_usd: 50           # GRU pasa a normal si mediana_pp(GRU) <= mediana_pp(GIG) - margen
@@ -89,7 +94,6 @@ airport_names:
   AEP: Buenos Aires (Aeroparque)
   GIG: Río de Janeiro (Galeão)
   GRU: São Paulo (Guarulhos)
-  CFB: Cabo Frío
 
 # Nombres para mostrar en las alertas (la API devuelve solo el código IATA de la aerolínea).
 # Si aparece un código que no está acá, se muestra el código.

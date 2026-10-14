@@ -62,6 +62,7 @@ class BudgetConfig:
 class OptimizationConfig:
     top_k: int = 8
     rotating_k: int = 5
+    night_top_k: int = 0             # corrida de la noche: también vuelve a consultar los N pares más baratos
     max_staleness_runs: int = 6
     no_service_after_empty_runs: int = 2
     recheck_days: int = 14

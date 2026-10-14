@@ -541,3 +541,23 @@ def test_manual_night_run_replaces_the_scheduled_one(cfg, notifier, channels, cl
     Runner(cfg, store, src, notifier, clock=clock).run(slot="night", once_per_day=True)
     assert src.calls
     store.close()
+
+
+def test_night_rechecks_the_cheapest_dates_too(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")},
+                      search={"destinations": ["GIG", "GRU"]},
+                      optimization={"top_k": 12, "rotating_k": 10, "night_top_k": 12})
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)              # línea base
+    clock.advance()
+    morning = FakeSource(constant_prices())
+    _run_slot(cfg, morning, notifier, clock, "morning")
+    assert len(_pairs(morning.calls)) == 12 + 10
+    clock.now += dt.timedelta(hours=12)
+    night = FakeSource(constant_prices())
+    _run_slot(cfg, night, notifier, clock, "night")
+    gig = _pairs(night.calls)
+    cheapest = set(sorted(_all_gig_pairs(cfg), key=lambda p: constant_prices()(
+        type("Q", (), {"destination": "GIG", "depart": p[0], "ret": p[1], "origin": "BUE"})))[:12])
+    assert cheapest <= gig                                                     # segunda revisión del día
+    assert gig - cheapest == _all_gig_pairs(cfg) - _pairs(morning.calls)       # + lo que la mañana no miró
+    assert {q.destination for q in night.calls} == {"GIG", "GRU"}

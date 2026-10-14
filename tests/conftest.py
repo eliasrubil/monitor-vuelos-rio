@@ -45,10 +45,11 @@ def _no_network(monkeypatch):
 
 
 def repo_raw_config() -> dict:
-    """config.yaml con las fechas fijas de los tests (39 pares por destino), para que editar las fechas reales
-    no rompa los tests."""
+    """config.yaml con valores fijos para los tests (3 destinos, 39 pares por destino, top 8 + 5 a la mañana),
+    para que editar fechas, destinos o cantidades en el config real no rompa los tests."""
     raw = yaml.safe_load((ROOT / "config.yaml").read_text())
-    raw["search"].update(departure_from="2027-01-14", return_until="2027-02-05")
+    raw["search"].update(departure_from="2027-01-14", return_until="2027-02-05", destinations=["GIG", "GRU", "CFB"])
+    raw["optimization"].update(top_k=8, rotating_k=5, night_top_k=0)
     return raw
 
 

@@ -14,7 +14,8 @@ def test_repo_config_loads():
     assert cfg.search.airports_exclude == ["SDU"] and cfg.search.airlines_exclude == ["FO"]
     assert cfg.optimization.reduced_destinations == []   # GRU diario
     assert cfg.detection.cross.max_rank == 3
-    assert cfg.search.destinations == ["GIG", "GRU", "CFB"]
+    assert cfg.search.destinations == ["GIG", "GRU"]          # CFB dado de baja
+    assert (cfg.optimization.top_k, cfg.optimization.rotating_k, cfg.optimization.night_top_k) == (12, 10, 12)
     assert cfg.search.open_jaw is False
     assert cfg.budget.max_requests_per_month == 4500
     assert cfg.budget.dry_run_max_queries == 4
