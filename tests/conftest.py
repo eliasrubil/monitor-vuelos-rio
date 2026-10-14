@@ -44,9 +44,17 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(requests, "post", boom)
 
 
+def repo_raw_config() -> dict:
+    """config.yaml con las fechas fijas de los tests (39 pares por destino), para que editar las fechas reales
+    no rompa los tests."""
+    raw = yaml.safe_load((ROOT / "config.yaml").read_text())
+    raw["search"].update(departure_from="2027-01-14", return_until="2027-02-05")
+    return raw
+
+
 @pytest.fixture
 def raw_config() -> dict:
-    return yaml.safe_load((ROOT / "config.yaml").read_text())
+    return repo_raw_config()
 
 
 def make_config(raw: dict, **sections):

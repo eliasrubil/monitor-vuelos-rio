@@ -3,14 +3,13 @@ import sqlite3
 from collections import defaultdict
 
 import pytest
-import yaml
 
 from monitor.alerts.channels import LogNotifier, Notifier
 from monitor.planner import plan_run
 from monitor.runner import Runner
 from monitor.storage import Store
 
-from .conftest import ROOT, FakeChannel, FakeSource, constant_prices, make_config
+from .conftest import FakeChannel, FakeSource, constant_prices, make_config, repo_raw_config
 
 
 def run_once(cfg, source, notifier, clock, full_scan=False, dry_run=False):
@@ -260,15 +259,15 @@ def test_alert_antispam_and_booking_link(big_cfg, notifier, channels, clock):
     assert len(alerts_sent(channels["telegram"])) == 1 and len(summaries_sent(channels["telegram"])) == 1
     subject, text = alerts_sent(channels["telegram"])[0]
     assert subject == ""
-    assert text.splitlines() == ["EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona - Aerolíneas Argentinas, GOL",
+    assert text.splitlines() == ["I) EZE --> GIG 20/01 al 30/01 (10 días) - 300USD por persona - Aerolíneas Argentinas, GOL",
                                  "Reserva: https://example.com/book/BUE-GIG-2027-01-20-2027-01-30"]
     assert len(src.link_calls) == 1               # link solo para el alertado
     # email: una alerta (formato completo) + resumen
     # un único email por día: solo las alertas
     assert len(channels["email"].sent) == 1
     mail_subject, mail = channels["email"].sent[0]
-    assert mail_subject.endswith("by Rabo - 1 hallazgo")
-    assert "Precio bajo EZE→GIG" in mail and "300 por persona" in mail
+    assert mail_subject.endswith("by BotRabo - Morning Sunshine! - 1 hallazgo")
+    assert "I) Precio bajo EZE→GIG" in mail and "300 por persona" in mail
     assert "Vs. itinerario:" in mail and "USD 1.500 total" in mail and "10 días" in mail
 
     clock.advance()
@@ -338,7 +337,7 @@ def test_same_price_dates_alert_once_and_are_all_recorded(big_cfg, notifier, cha
     src = FakeSource(prices, airports_fn=lambda q: ("EZE", "AEP"))   # ida desde EZE, vuelta a AEP
     run_once(cfg, src, notifier, clock, full_scan=True)
     (_, text), = alerts_sent(channels["telegram"])
-    assert text.splitlines()[0] == ("EZE/AEP --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
+    assert text.splitlines()[0] == ("I) EZE/AEP --> GIG 16/01 al 26/01 (10 días) - 250USD por persona "
                                     "(+2 fechas más con el mismo precio) - Aerolíneas Argentinas, GOL")
     assert "18/01" not in text and "20/01" not in text
     assert len(src.link_calls) == 1                       # link solo para la primera
@@ -369,7 +368,7 @@ def test_telegram_list_is_split_without_cutting_alerts():
     from monitor.alerts.format import Candidate, telegram_alert_chunks
     cands = [Candidate("AEP", "GRU", dt.date(2027, 1, 18), dt.date(2027, 1, 29), 1, "AR", 390.0, 1950.0, "USD", i,
                        booking_links=[("", "https://example.com/" + "x" * 300)]) for i in range(30)]
-    chunks = telegram_alert_chunks(make_config(yaml.safe_load((ROOT / "config.yaml").read_text())), cands)
+    chunks = telegram_alert_chunks(make_config(repo_raw_config()), cands)
     assert len(chunks) > 1
     assert all(len(text) <= 4000 for text, _ in chunks)
     assert sorted(i for _, idx in chunks for i in idx) == list(range(30))
@@ -390,8 +389,130 @@ def test_alerts_are_sorted_by_price_per_person(big_cfg, notifier, channels, cloc
     src = FakeSource(lambda q: drops.get((q.destination, q.depart, q.ret), base(q)))
     run_once(cfg, src, notifier, clock, full_scan=True)
     (_, tg), = alerts_sent(channels["telegram"])
-    assert [l.split(" ")[2] for l in tg.splitlines() if " --> " in l] == ["GIG", "CFB", "GRU"]
+    assert [l.split(" ")[3] for l in tg.splitlines() if " --> " in l] == ["GIG", "CFB", "GRU"]
+    assert [l.split(" ")[0] for l in tg.splitlines() if " --> " in l] == ["I)", "II)", "III)"]
     (subject, mail), = channels["email"].sent
     assert subject.endswith("- 3 hallazgos")
-    assert mail.index("BUE→GIG") < mail.index("BUE→CFB") < mail.index("BUE→GRU")
+    assert mail.index("I) Precio bajo BUE→GIG") < mail.index("II) Precio bajo BUE→CFB") < mail.index(
+        "III) Precio bajo BUE→GRU")
     assert "buscá las mismas fechas directo en la web de la aerolínea" in mail
+
+
+def test_slot_for_uses_argentina_time():
+    from monitor.runner import slot_for
+    utc = dt.timezone.utc
+    assert slot_for(dt.datetime(2026, 10, 14, 11, 5, tzinfo=utc)) == "morning"    # 08:05
+    assert slot_for(dt.datetime(2026, 10, 14, 23, 10, tzinfo=utc)) == "night"     # 20:10
+    assert slot_for(dt.datetime(2026, 10, 15, 2, 30, tzinfo=utc)) == "night"      # 23:30 del 14
+    assert slot_for(dt.datetime(2026, 10, 14, 16, 59, tzinfo=utc)) == "morning"   # 13:59
+
+
+def _run_slot(cfg, source, notifier, clock, slot):
+    store = Store.open(cfg.database.path)
+    try:
+        return Runner(cfg, store, source, notifier, clock=clock).run(slot=slot)
+    finally:
+        store.close()
+
+
+def _pairs(calls, dest="GIG"):
+    return {(q.depart, q.ret) for q in calls if q.destination == dest}
+
+
+def test_night_run_follows_morning_findings_and_sweeps_unseen_dates(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)                    # 8 barridos completos, 08:00 hora argentina
+    channels["telegram"].sent.clear()
+    channels["email"].sent.clear()
+    cheap = (dt.date(2027, 1, 14), dt.date(2027, 1, 23))    # el par más barato de GIG: siempre en el top
+    morning_src = FakeSource(drop_for(cheap, 300))
+    _run_slot(cfg, morning_src, notifier, clock, "morning")
+    (m_subject, m_mail), = channels["email"].sent
+    assert m_subject.endswith("Morning Sunshine! - 1 hallazgo") and "I) Precio bajo BUE→GIG 14/01–23/01" in m_mail
+
+    morning_gig = _pairs(morning_src.calls)
+    new_pair = next(p for p in sorted(_all_gig_pairs(cfg), reverse=True) if p not in morning_gig)
+    base = constant_prices()
+
+    def night_prices(q):
+        if q.destination == "GIG" and (q.depart, q.ret) == cheap:
+            return 300.0                                    # el hallazgo de la mañana mantiene su precio
+        if q.destination == "GIG" and (q.depart, q.ret) == new_pair:
+            return 280.0                                    # fecha que la mañana no miró
+        return base(q)
+
+    clock.now += dt.timedelta(hours=12)                     # 20:00 hora argentina
+    night_src = FakeSource(night_prices)
+    _run_slot(cfg, night_src, notifier, clock, "night")
+
+    night_gig = _pairs(night_src.calls)
+    assert night_gig & morning_gig == {cheap}               # de lo que miró la mañana, solo el seguimiento
+    assert night_gig | morning_gig == _all_gig_pairs(cfg)   # entre las dos corridas, todas las fechas
+    assert len(night_src.calls) == 1 + 3 * (39 - 13)
+
+    _, (n_subject, n_mail) = channels["email"].sent
+    assert n_subject.endswith("Night Owl! - 1 hallazgo nuevo")
+    assert n_mail.startswith("Hallazgos de la mañana\nEl hallazgo I) de la mañana mantiene su precio\n")
+    assert f"I) Precio bajo BUE→GIG {new_pair[0]:%d/%m}–{new_pair[1]:%d/%m}" in n_mail
+    assert "14/01–23/01" not in n_mail.split("Hallazgos nuevos")[1]   # no se repite como nuevo
+
+    summaries = [s for s, _ in summaries_sent(channels["telegram"])]
+    assert len(summaries) == 2 and "Morning Sunshine!" in summaries[0] and "Night Owl!" in summaries[1]
+    (_, tg_night), = alerts_sent(channels["telegram"])[1:]
+    assert tg_night.splitlines()[:2] == ["Hallazgos de la mañana:", "El hallazgo I) de la mañana mantiene su precio"]
+
+    conn = db(cfg)
+    runs = conn.execute("SELECT mode, slot FROM runs ORDER BY id DESC LIMIT 2").fetchall()
+    assert [tuple(r) for r in runs] == [("night", "night"), ("incremental", "morning")]
+    labels = conn.execute("SELECT run_id, label, depart_date FROM alerts ORDER BY id").fetchall()
+    assert [r["label"] for r in labels] == [1, 1] and labels[0]["run_id"] != labels[1]["run_id"]
+
+
+def _all_gig_pairs(cfg):
+    from monitor.dates import date_pairs
+    return set(date_pairs(cfg.search.departure_from, cfg.search.return_until, cfg.search.durations))
+
+
+def test_night_followup_reports_price_changes(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)
+    channels["email"].sent.clear()
+    cheap = (dt.date(2027, 1, 14), dt.date(2027, 1, 23))
+    _run_slot(cfg, FakeSource(drop_for(cheap, 300)), notifier, clock, "morning")
+    clock.now += dt.timedelta(hours=12)
+    _run_slot(cfg, FakeSource(drop_for(cheap, 315)), notifier, clock, "night")
+    _, (subject, mail) = channels["email"].sent
+    assert subject.endswith("Night Owl! - sin hallazgos nuevos")
+    assert "El hallazgo I) de la mañana subió a USD 315 por persona" in mail and "Sin hallazgos nuevos." in mail
+
+    clock.now += dt.timedelta(hours=12)
+    channels["email"].sent.clear()
+    _run_slot(cfg, FakeSource(drop_for(cheap, 300)), notifier, clock, "morning")   # 300: anti-spam, sin alerta
+    assert channels["email"].sent == []
+    clock.now += dt.timedelta(hours=12)
+    _run_slot(cfg, FakeSource(constant_prices()), notifier, clock, "night")         # sin hallazgos ni seguimiento
+    assert channels["email"].sent == []
+
+
+def test_night_followup_gone(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock)
+    channels["email"].sent.clear()
+    cheap = (dt.date(2027, 1, 14), dt.date(2027, 1, 23))
+    _run_slot(cfg, FakeSource(drop_for(cheap, 300)), notifier, clock, "morning")
+    clock.now += dt.timedelta(hours=12)
+    _run_slot(cfg, FakeSource(drop_for(cheap, None)), notifier, clock, "night")
+    assert "El hallazgo I) de la mañana ya no aparece" in channels["email"].sent[-1][1]
+
+
+def test_night_without_morning_run_sweeps_dates_not_seen_today(big_cfg, notifier, clock):
+    cfg = big_cfg
+    _build_history(cfg, notifier, clock, runs=2)
+    clock.now += dt.timedelta(hours=12)
+    src = FakeSource(constant_prices())
+    _run_slot(cfg, src, notifier, clock, "night")
+    assert len(src.calls) == 117
+    clock.now += dt.timedelta(hours=1)
+    src = FakeSource(constant_prices())
+    _run_slot(cfg, src, notifier, clock, "night")            # todo ya se consultó hoy
+    assert src.calls == []

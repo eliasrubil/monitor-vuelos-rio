@@ -1,12 +1,12 @@
 # monitor-vuelos-rio
 
 Monitor de precios de vuelos **Buenos Aires → Brasil (GIG, GRU, CFB)**, 100% determinístico (sin LLMs en
-tiempo de ejecución). Corre una vez por día en GitHub Actions, guarda el historial en SQLite
+tiempo de ejecución). Corre dos veces por día en GitHub Actions (08:00 y 20:00, hora argentina), guarda el historial en SQLite
 (`data/prices.db`, commiteada por el workflow) y avisa por **Telegram** y **email** cuando detecta precios
 bajos.
 
-- Búsqueda: ida y vuelta al mismo destino, ida ≥ 2027-01-14, vuelta ≤ 2027-02-05, duración 9/10/11 días
-  (39 pares de fechas por destino), 5 adultos, máximo 1 escala, precios en USD con impuestos.
+- Búsqueda: ida y vuelta al mismo destino, ida ≥ 2027-01-13, vuelta ≤ 2027-02-06, duración 9/10/11 días
+  (45 pares de fechas por destino), 5 adultos, máximo 1 escala, precios en USD con impuestos.
 - Fuente de datos: [Ignav](https://ignav.com/docs) (`POST /api/fares/round-trip`), detrás de una interfaz
   `PriceSource` intercambiable.
 - Todo se configura en [`config.yaml`](config.yaml).
@@ -52,8 +52,9 @@ y vuelta usan aeropuertos distintos). Los destinos son **GIG**, **GRU** y **CFB*
 
 | Situación | Qué se consulta |
 |---|---|
-| Primera corrida, o `--full-scan` | Barrido completo: 39 pares × 2 orígenes |
-| Corridas siguientes | `top_k` (8) pares más baratos + `rotating_k` (5) del resto, el dato más viejo primero |
+| Primera corrida, o `--full-scan` | Barrido completo: 45 pares por destino |
+| Corrida de la mañana (08:00) | `top_k` (8) pares más baratos + `rotating_k` (5) del resto, el dato más viejo primero |
+| Corrida de la noche (20:00) | Los hallazgos de la mañana (seguimiento) + **todos** los pares con servicio que la mañana no consultó. Así cada fecha se revisa todos los días |
 | Garantía de frescura | Si un par llegaría a `max_staleness_runs` (6) corridas sin actualizar, se agrega igual |
 | `no_service` | Una consulta que dio "sin resultados" 2 corridas seguidas se marca `no_service` y se reconsulta cada `recheck_days` (14) |
 | Modo reducido (desactivado) | Hoy los tres destinos, GRU incluido, se consultan todos los días (`reduced_destinations: []`). Si se agrega un destino a esa lista, se consulta cada `reduced_interval_days` y pasa a diario cuando su mediana ≤ mediana de GIG − `gru_margin_usd` |
@@ -74,19 +75,29 @@ optimización se hace eligiendo qué pares consultar.
 - **Anti-spam:** un itinerario ya alertado solo se vuelve a alertar si su precio baja ≥ 3% respecto de la
   última alerta.
 
-**Alertas.** Telegram recibe **un solo mensaje por corrida** con todas las alertas en formato corto (si supera
-el límite de caracteres de Telegram se parte en varios mensajes, sin cortar ninguna alerta):
+**Alertas.** Telegram recibe **un solo mensaje por corrida** con todas las alertas en formato corto,
+numeradas I), II), ... (si supera el límite de caracteres de Telegram se parte en varios mensajes, sin cortar
+ninguna alerta):
 
 ```
-AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona - Aerolíneas Argentinas
-Reserva: https://...
-EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio) - JetSMART
+I) EZE --> GIG 16/01 al 26/01 (10 días) - 405USD por persona (+2 fechas más con el mismo precio) - JetSMART
 Reserva Ida: https://...
 Reserva Vuelta: https://...
+II) AEP --> CFB 20/01 al 31/01 (11 días) - 834USD por persona - Aerolíneas Argentinas
+Reserva: https://...
 ```
 
-El email llega **uno solo por día**, con todas las alertas en formato completo (si no hay alertas, no se
-manda). El **resumen** de la corrida (consultas, top 5 más baratos y media por destino) va por Telegram y se
+Llega **un email por corrida**, con todas las alertas numeradas en formato completo:
+
+- **Mañana:** título "Alerta Diaria de Vuelos 🇧🇷 by BotRabo - Morning Sunshine! - 3 hallazgos". Si no hay
+  alertas, no se manda.
+- **Noche:** título "... - Night Owl! - 2 hallazgos nuevos". Empieza con un renglón por cada hallazgo de la
+  mañana ("El hallazgo II) de la mañana mantiene su precio", "... subió a USD 352 por persona", "... bajó a
+  USD 301 por persona" o "... ya no aparece") y sigue con los hallazgos nuevos: solo fechas distintas de las
+  alertadas a la mañana. Se manda si hubo hallazgos a la mañana o si aparece alguno nuevo. Telegram recibe lo
+  mismo en formato corto.
+
+El **resumen** de cada corrida (consultas, top 5 más baratos y media por destino) va por Telegram y se
 puede desactivar. Si varias fechas del mismo origen y destino alertan con
 exactamente el mismo precio, se avisa solo la primera y se indica cuántas más tienen ese precio (todas quedan
 registradas para el anti-spam). Si un canal
@@ -187,8 +198,9 @@ cualquier valor secreto que aparezca en un mensaje de log.
 1. Mergeá estos cambios a la rama principal. GitHub solo ejecuta los `schedule` de la rama por defecto.
 2. Pestaña **Actions**: si GitHub muestra *"Workflows aren't being run on this repository"*, tocá
    **I understand my workflows, go ahead and enable them**.
-3. El workflow **Monitor de vuelos** corre todos los días a las **11:00 UTC (08:00 en Argentina)**. GitHub
-   puede demorar los cron unos minutos en horarios de mucha carga.
+3. El workflow **Monitor de vuelos** corre todos los días a las **08:00** (mañana) y a las **20:00** (noche),
+   hora argentina (11:00 y 23:00 UTC). GitHub puede demorar los cron unos minutos en horarios de mucha carga.
+   Con `slot: auto`, una corrida manual desde las 14:00 hora argentina se toma como la de la noche.
 4. Necesita permiso de escritura para commitear la base. Ya está declarado (`permissions: contents: write`).
    Si tu organización lo restringe, habilitalo en **Settings → Actions → General → Workflow permissions →
    Read and write permissions**.
@@ -210,7 +222,8 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   requests en la base, y la commitea.
 - **demo_alert:** manda alertas simuladas (un email y un mensaje de Telegram) para ver cómo se ven, sin
   consultar la API ni tocar la base.
-- **full_scan:** barrido completo de todas las combinaciones (117 requests).
+- **full_scan:** barrido completo de todas las combinaciones (135 requests).
+- **slot:** `auto` (por la hora), `morning` o `night`, para forzar qué corrida es.
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
 cuando un itinerario acumula 7 observaciones.
@@ -232,7 +245,8 @@ export GMAIL_ADDRESS=... GMAIL_APP_PASSWORD=... ALERT_EMAIL_TO=...
 
 python -m monitor --test-alert       # mensaje de prueba por ambos canales
 python -m monitor --dry-run -v       # hasta 4 consultas; no guarda precios ni alerta (sí cuenta el uso)
-python -m monitor                    # corrida normal
+python -m monitor                    # corrida normal (mañana o noche según la hora argentina)
+python -m monitor --slot night       # forzar la corrida de la noche
 python -m monitor --full-scan        # barrido completo
 python -m monitor --config otra.yaml # otra configuración
 ```
@@ -260,7 +274,7 @@ producen un error, así un typo no pasa desapercibido. Lo más común:
 | Sin links de reserva (ahorra requests) | `alerts.booking_links: false` |
 | Apagar un canal | `alerts.telegram: false` o `alerts.email: false` |
 | Otra fecha de fin | `schedule.stop_after` |
-| Otro horario | el `cron` en `.github/workflows/monitor.yml` (está en UTC) |
+| Otro horario | los `cron` en `.github/workflows/monitor.yml` (están en UTC; la noche es la que arranca desde las 14:00 hora argentina) |
 
 `search.open_jaw` existe para habilitar a futuro combinaciones tipo ida GIG / vuelta CFB, pero el adaptador
 de Ignav todavía no lo soporta (ver [limitaciones](#limitaciones-conocidas-de-la-api)). Si lo activás, se
@@ -277,22 +291,23 @@ base, detección, alertas) no cambia.
 ## Presupuesto de requests y costo
 
 Al iniciar, cada corrida loguea los requests estimados y el acumulado del mes. Si la corrida haría superar
-`max_requests_per_month` (2500), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
+`max_requests_per_month` (4500), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
 cuántas consultas se hicieron, cuántas se ahorraron frente a un barrido completo y el acumulado del mes. El
 contador mensual cuenta solo las respuestas 200, que son las que Ignav factura, incluidas las de los
 dry runs.
 
-Con la configuración actual (medido con una simulación de 30 días):
+Con la configuración actual:
 
 | Corrida | Requests |
 |---|---|
-| Barrido inicial (39 pares × 3 destinos, origen BUE) | 117 |
-| Día normal (GIG + GRU + CFB: 13 pares c/u) | ~39–40 |
+| Barrido completo (45 pares × 3 destinos, origen BUE) | 135 |
+| Mañana (GIG + GRU + CFB: 13 pares c/u, más fechas que vencen por antigüedad) | ~40–48 |
+| Noche (seguimiento de la mañana + fechas que la mañana no consultó, sin las `no_service`) | ~85–90 |
 | Links de reserva | 1 por alerta |
 | Dry run manual | hasta 4 |
-| **Mes típico** | **~1.180** (el primer mes ~1.300 con el barrido) |
+| **Mes típico** | **~4.200** |
 
-Costo: ~USD 2,4 por mes (USD 2 cada 1.000 requests).
+Costo: ~USD 8,4 por mes (USD 2 cada 1.000 requests).
 
 ---
 

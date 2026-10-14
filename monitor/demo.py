@@ -5,7 +5,15 @@ from __future__ import annotations
 import datetime as dt
 
 from .alerts.channels import Notifier
-from .alerts.format import Candidate, alert_message, alerts_email, telegram_alert_chunks
+from .alerts.format import (
+    SLOT_MORNING,
+    SLOT_NIGHT,
+    Candidate,
+    FollowUp,
+    alert_message,
+    alerts_email,
+    telegram_alert_chunks,
+)
 from .config import Config
 from .detection import evaluate
 from .storage import WindowPoint
@@ -44,12 +52,34 @@ def demo_alerts(cfg: Config, now: dt.datetime) -> list[tuple[Candidate, object]]
     return out
 
 
+def demo_followups(alerts: list[tuple[Candidate, object]]) -> list[FollowUp]:
+    """Seguimiento nocturno simulado de los hallazgos de la mañana: uno de cada caso."""
+    out = []
+    for label, ((c, _), (status, delta)) in enumerate(
+            zip(alerts, [("same", 0), ("up", 18), ("gone", None)]), 1):
+        f = FollowUp(label, c.origin, c.destination, c.depart, c.ret, c.price_pp, status)
+        f.price_pp = None if delta is None else c.price_pp + delta
+        out.append(f)
+    return out
+
+
 def send_demo(cfg: Config, notifier: Notifier, now: dt.datetime) -> list[str]:
-    """Un único mensaje de Telegram y un único email, con el mismo formato que una corrida real."""
+    """La corrida de la mañana y la de la noche, cada una con un mensaje de Telegram y un email, con el mismo
+    formato que una corrida real. Devuelve los canales por los que salió la de la mañana."""
     alerts = demo_alerts(cfg, now)
-    delivered = []
-    for text, _ in telegram_alert_chunks(cfg, [c for c, _ in alerts]):
-        delivered += notifier.send("", f"{DEMO_PREFIX}\n{text}", only={"telegram"})
-    subject, body = alerts_email(cfg, [alert_message(cfg, c, ev) for c, ev in alerts])
-    delivered += notifier.send(f"{DEMO_PREFIX} {subject}", body, only={"email"})
-    return delivered
+    # A la noche aparece una fecha distinta de GRU, más barata que la de la mañana.
+    gru, gru_ev = next((c, ev) for c, ev in alerts if c.destination == "GRU")
+    price = gru.price_pp - 12
+    night = [(Candidate(gru.origin, "GRU", dt.date(2027, 1, 24), dt.date(2027, 2, 3), gru.stops, gru.airlines, price,
+                        price * cfg.search.adults, gru.currency, 0, depart_airport="AEP", return_airport="AEP"),
+              gru_ev)]
+    runs = [(SLOT_MORNING, alerts, None), (SLOT_NIGHT, night, demo_followups(alerts))]
+    delivered_by_slot = []
+    for slot, items, followups in runs:
+        delivered = []
+        for text, _ in telegram_alert_chunks(cfg, [c for c, _ in items], slot=slot, followups=followups):
+            delivered += notifier.send("", f"{DEMO_PREFIX}\n{text}", only={"telegram"})
+        subject, body = alerts_email(cfg, [alert_message(cfg, c, ev) for c, ev in items], slot, followups)
+        delivered += notifier.send(f"{DEMO_PREFIX} {subject}", body, only={"email"})
+        delivered_by_slot.append(delivered)
+    return delivered_by_slot[0]
