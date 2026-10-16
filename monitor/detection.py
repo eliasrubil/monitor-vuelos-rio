@@ -57,13 +57,15 @@ class Evaluation:
     def triggered(self) -> bool:
         return bool(self.rules)
 
+    # La referencia es la mediana (no la media): un precio atípico, p. ej. una tarifa de USD 1.310 en una
+    # fecha que suele costar 440, no la mueve y no genera falsas alertas.
     @property
     def pct_below_itinerary(self) -> Optional[float]:
-        return pct_below(self.price_pp, self.itinerary_stats.mean) if self.itinerary_stats else None
+        return pct_below(self.price_pp, self.itinerary_stats.median) if self.itinerary_stats else None
 
     @property
     def pct_below_window(self) -> Optional[float]:
-        return pct_below(self.price_pp, self.window_stats.mean) if self.window_stats else None
+        return pct_below(self.price_pp, self.window_stats.median) if self.window_stats else None
 
 
 def evaluate(
@@ -84,9 +86,9 @@ def evaluate(
         s = ev.itinerary_stats
         if s.mad > 0:
             ev.robust_z = (price_pp - s.median) / (t.mad_scale * s.mad)
-        below_mean = price_pp < s.mean * (1 - t.drop_pct)
+        below_median = price_pp < s.median * (1 - t.drop_pct)
         below_z = ev.robust_z is not None and ev.robust_z < t.robust_z
-        if below_mean or below_z:
+        if below_median or below_z:
             ev.rules.append(RULE_TEMPORAL)
 
     # Regla B: transversal
@@ -100,7 +102,7 @@ def evaluate(
         ev.window_rank = 1 + sum(1 for p in prices if p < price_pp)
         ev.window_cutoff = c.max_rank
         in_bottom = ev.window_rank <= ev.window_cutoff
-        if in_bottom and pct_below(price_pp, ev.window_stats.mean) >= c.drop_pct:
+        if in_bottom and pct_below(price_pp, ev.window_stats.median) >= c.drop_pct:
             ev.rules.append(RULE_CROSS)
 
     # Regla C: umbral absoluto

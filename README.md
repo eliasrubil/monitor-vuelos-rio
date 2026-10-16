@@ -65,10 +65,11 @@ optimización se hace eligiendo qué pares consultar.
 **Detección** (umbrales en `config.yaml > detection`):
 
 - **Regla A (temporal):** el itinerario contra su propio historial (mínimo 7 observaciones). Alerta si
-  `precio_pp < media × (1 − 0.15)` o si el z robusto `(precio − mediana) / (1.4826 × MAD) < −2.5`.
-  Si el MAD es 0 (precios idénticos), solo aplica la condición de la media.
+  `precio_pp < mediana × (1 − 0.15)` o si el z robusto `(precio − mediana) / (1.4826 × MAD) < −2.5`.
+  Si el MAD es 0 (precios idénticos), solo aplica la condición de la mediana. Se usa la mediana y no la media
+  porque un precio atípico (p. ej. una tarifa de USD 1.310 en una fecha que suele costar 440) no la mueve.
 - **Regla B (transversal):** el itinerario contra el último precio conocido de todos los pares del mismo
-  destino (mínimo 10 pares). Alerta si está entre las **3 fechas más baratas** del destino (`max_rank`) **y** ≥ 15% debajo de la media.
+  destino (mínimo 10 pares). Alerta si está entre las **3 fechas más baratas** del destino (`max_rank`) **y** ≥ 15% debajo de la mediana.
 - **Regla C (absoluta):** `absolute_threshold_usd_pp`, desactivada mientras sea `null`.
 - Si se disparan varias reglas, se manda **una sola alerta**. La regla no se muestra en el mensaje, pero
   queda guardada en la tabla `alerts` y en el log de la corrida.
@@ -126,8 +127,8 @@ Precio: USD 412 por persona · USD 2.060 total (5 adultos, con impuestos)
 Reserva: https://...
 
 >>STATS<<
-Vs. itinerario: 17,6% debajo de la media (8 obs., media USD 500)
-Vs. ventana GIG: 21,0% debajo de la media (puesto 1 de 39, media USD 522)
+Vs. itinerario: 17,6% debajo de la mediana (8 obs., mediana USD 500)
+Vs. ventana GIG: 21,0% debajo de la mediana (puesto 1 de 39, mediana USD 522)
 z robusto del itinerario: -5.40
 ```
 

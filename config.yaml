@@ -63,14 +63,15 @@ optimization:
   gru_margin_usd: 50           # GRU pasa a normal si mediana_pp(GRU) <= mediana_pp(GIG) - margen
 
 detection:
+  # Las referencias son medianas (no medias), para que un precio atípico no genere falsas alertas.
   temporal:                    # Regla A: el itinerario contra su propio historial
-    drop_pct: 0.15
+    drop_pct: 0.15             # alerta si precio < mediana del historial × (1 - drop_pct)
     robust_z: -2.5
     min_observations: 7
     mad_scale: 1.4826          # z robusto = (precio - mediana) / (mad_scale * MAD)
   cross:                       # Regla B: contra los demás pares del mismo destino
     max_rank: 3                # solo las 3 fechas más baratas del destino pueden alertar
-    drop_pct: 0.15
+    drop_pct: 0.15             # y ≥ 15% debajo de la mediana del destino
     min_pairs: 10
   absolute_threshold_usd_pp: null   # Regla C: desactivada mientras sea null
   antispam_min_drop_pct: 0.03
