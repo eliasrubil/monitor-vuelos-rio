@@ -129,7 +129,7 @@ def _vs_line(label: str, below: Optional[float], extra: str) -> str:
     if below is None:
         return f"{label}: sin datos ({extra})"
     direction = "debajo" if below >= 0 else "arriba"
-    return f"{label}: {pct(abs(below))} {direction} de la media ({extra})"
+    return f"{label}: {pct(abs(below))} {direction} de la mediana ({extra})"
 
 
 def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
@@ -139,11 +139,11 @@ def alert_message(cfg: Config, c: Candidate, ev: Evaluation) -> tuple[str, str]:
     )
     airlines = airline_names(cfg, c)
     its = ev.itinerary_stats
-    itin_extra = f"{its.n} obs., media {money(its.mean, c.currency)}" if its else "0 obs."
+    itin_extra = f"{its.n} obs., mediana {money(its.median, c.currency)}" if its else "0 obs."
     win = ev.window_stats
     if win:
         rank_txt = f"puesto {ev.window_rank} de {win.n}, " if ev.window_rank else f"{win.n} pares, "
-        win_extra = f"{rank_txt}media {money(win.mean, c.currency)}"
+        win_extra = f"{rank_txt}mediana {money(win.median, c.currency)}"
     else:
         win_extra = "0 pares"
     details = [

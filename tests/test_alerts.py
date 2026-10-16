@@ -154,7 +154,7 @@ def test_alert_message_contents(cfg):
         "Reserva: https://example.com/x",
     ]
     assert stats.splitlines() == [
-        "Vs. itinerario: 17,6% debajo de la media (8 obs., media USD 500)",
+        "Vs. itinerario: 17,6% debajo de la mediana (8 obs., mediana USD 500)",
         "Vs. ventana GIG: sin datos (0 pares)",
     ]
     for gone in ("Destino:", "Origen:", "Regla", "máximo", "antigüedad"):

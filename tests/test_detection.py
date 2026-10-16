@@ -21,7 +21,7 @@ def test_stats():
     assert s.n == 5 and s.median == 3 and s.mean == 22 and s.mad == 1
 
 
-def test_rule_a_by_mean():
+def test_rule_a_by_median():
     ev = evaluate(80, [100] * 7, [], DetectionConfig(), NOW)
     assert ev.rules == ["A"]
     assert ev.robust_z is None          # MAD = 0: z no definido
@@ -31,7 +31,7 @@ def test_rule_a_by_mean():
 def test_rule_a_by_robust_z():
     history = [100, 102, 98, 101, 99, 100, 103, 97]
     ev = evaluate(90, history, [], DetectionConfig(), NOW)
-    # 90 no está 15% debajo de la media (100), pero z = (90-100)/(1.4826*1.5) ≈ -4.5
+    # 90 no está 15% debajo de la mediana (100), pero z = (90-100)/(1.4826*1.5) ≈ -4.5
     assert ev.rules == ["A"]
     assert ev.robust_z < -2.5
 
@@ -50,7 +50,7 @@ def test_rule_b_bottom_decile_and_below_mean():
     assert ev.window_age_days == (2, 4)
 
 
-def test_rule_b_requires_drop_vs_mean():
+def test_rule_b_requires_drop_vs_median():
     prices = [100 + i for i in range(20)]
     ev = evaluate(100, [], window(prices), DetectionConfig(), NOW)
     assert ev.window_rank == 1
@@ -84,3 +84,20 @@ def test_antispam():
     assert not passes_antispam(98, 100, 0.03)
     assert passes_antispam(97, 100, 0.03)
     assert not passes_antispam(120, 100, 0.03)
+
+
+def test_outlier_does_not_trigger_rule_a():
+    """Caso real (GRU 22/01-02/02): un dato de USD 1.310 subía la media a ~561 y 473 alertaba por estar
+    "15% debajo de la media", aunque es más caro que lo habitual (~440)."""
+    history = [424, 444, 433, 430, 446, 440, 1310]
+    ev = evaluate(473, history, [], DetectionConfig(), NOW)
+    assert ev.rules == []
+    assert ev.itinerary_stats.median == 440 and ev.pct_below_itinerary < 0
+    assert evaluate(370, history, [], DetectionConfig(), NOW).rules == ["A"]   # 370 < 440 × 0,85
+
+
+def test_rule_b_uses_window_median():
+    # Unas pocas fechas carísimas suben la media; contra la mediana, 95 no está 15% abajo.
+    prices = [100 + i for i in range(17)] + [2000, 2000, 2000, 95]
+    ev = evaluate(95, [], window(prices), DetectionConfig(), NOW)
+    assert ev.window_rank == 1 and ev.rules == []
