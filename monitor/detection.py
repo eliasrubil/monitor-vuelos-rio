@@ -74,6 +74,7 @@ def evaluate(
     window: list[WindowPoint],
     cfg: DetectionConfig,
     now: dt.datetime,
+    destination: Optional[str] = None,
 ) -> Evaluation:
     """history: precios por persona anteriores del itinerario (sin la corrida actual).
     window: último precio conocido de cada par del destino (incluye el itinerario evaluado)."""
@@ -105,8 +106,9 @@ def evaluate(
         if in_bottom and pct_below(price_pp, ev.window_stats.median) >= c.drop_pct:
             ev.rules.append(RULE_CROSS)
 
-    # Regla C: umbral absoluto
-    if cfg.absolute_threshold_usd_pp is not None and price_pp <= cfg.absolute_threshold_usd_pp:
+    # Regla C: umbral absoluto (el del destino si tiene uno propio): alerta si el precio es menor al umbral.
+    threshold = cfg.absolute_threshold_by_destination.get(destination, cfg.absolute_threshold_usd_pp)
+    if threshold is not None and price_pp < threshold:
         ev.rules.append(RULE_ABSOLUTE)
 
     return ev

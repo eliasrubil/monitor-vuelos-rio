@@ -15,7 +15,7 @@ search:
   # Ida y vuelta siempre al mismo destino. open_jaw: true habilitaría combinaciones
   # tipo ida GIG / vuelta GRU, pero requiere un adaptador que lo soporte (Ignav todavía no).
   open_jaw: false
-  departure_from: 2027-01-13   # fecha de ida >= esta
+  departure_from: 2027-01-10   # fecha de ida >= esta
   return_until: 2027-02-06     # fecha de vuelta <= esta
   durations: [9, 10, 11]       # días entre ida y vuelta
   adults: 5
@@ -42,8 +42,9 @@ ignav:
   allow_self_transfer: true    # default de la API
 
 budget:
-  # GIG + GRU: mañana ~50 + noche ~70 consultas por día (más links de reserva) ≈ 3.800 por mes.
-  max_requests_per_month: 4500 # si la corrida lo superaría, se saltea y se avisa
+  # GIG (todas sus fechas mañana y noche) + GRU, desde el 10/01: ~180 consultas por día (con reintentos y
+  # links de reserva) ≈ 5.500 por mes.
+  max_requests_per_month: 7000 # si la corrida lo superaría, se saltea y se avisa
   dry_run_max_queries: 4       # tope de consultas de un dry-run (se cobran y se suman al contador)
 
 optimization:
@@ -54,9 +55,17 @@ optimization:
   top_k: 12                    # pares de fechas más baratos por destino que se consultan siempre
   rotating_k: 10               # pares extra del resto, el dato más viejo primero
   night_top_k: 12              # a la noche se vuelven a consultar los N pares más baratos de cada destino
+  # Valores propios por destino. Río tiene prioridad: todas sus fechas, a la mañana y a la noche. São Paulo no
+  # tiene segunda revisión nocturna (a la noche solo se miran las fechas que la mañana no consultó).
+  destination_overrides:
+    GIG: {top_k: 60, rotating_k: 60, night_top_k: 60}
+    GRU: {night_top_k: 0}
+  # Si Ignav devuelve una respuesta vacía (cero itinerarios), se reintenta una vez tras estos segundos.
+  # Desde el 24/10 devolvió muchas respuestas vacías en menos de 1 segundo para fechas de GIG.
+  retry_empty_wait_seconds: 20
   max_staleness_runs: 6        # ningún par queda más de N corridas (de su destino) sin actualizar
-  no_service_after_empty_runs: 2
-  recheck_days: 14             # cada cuánto se reconsulta un par marcado no_service
+  no_service_after_empty_runs: 4   # vacíos seguidos antes de marcar un par no_service (antes 2)
+  recheck_days: 2              # cada cuánto se reconsulta un par marcado no_service (antes 14)
   reduced_destinations: []     # sin modo reducido: GRU se consulta todos los días como GIG (antes [GRU])
   reduced_interval_days: 2     # solo aplica a destinos en reduced_destinations
   reduced_reference_destination: GIG
@@ -73,8 +82,11 @@ detection:
     max_rank: 3                # solo las 3 fechas más baratas del destino pueden alertar
     drop_pct: 0.15             # y ≥ 15% debajo de la mediana del destino
     min_pairs: 10
-  absolute_threshold_usd_pp: null   # Regla C: desactivada mientras sea null
+  absolute_threshold_usd_pp: null   # Regla C global: desactivada mientras sea null
+  absolute_threshold_by_destination: # Regla C por destino: alerta si el precio por persona es MENOR a este valor
+    GIG: 350
   antispam_min_drop_pct: 0.03
+  antispam_memory_days: 7      # una fecha ya alertada puede volver a alertar al mismo precio después de 7 días
 
 alerts:
   telegram: true

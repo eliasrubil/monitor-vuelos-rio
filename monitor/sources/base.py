@@ -52,6 +52,7 @@ class SearchOutcome:
     billable: bool = False                # la request cuenta para el presupuesto
     error: Optional[str] = None
     fatal: bool = False                   # error que hace inútil seguir consultando (clave, facturación)
+    raw_count: Optional[int] = None       # itinerarios que devolvió la fuente, antes de los filtros propios
 
 
 @dataclass

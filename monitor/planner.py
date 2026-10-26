@@ -37,7 +37,7 @@ class PlannedQuery:
     destination: str
     depart: dt.date
     ret: dt.date
-    reason: str            # full | top | rotating | stale | recheck | followup | sweep
+    reason: str            # full | top | rotating | stale | recheck | followup | sweep | empty
 
 
 @dataclass
@@ -155,7 +155,7 @@ def _select(
     new_seq: int,
     today: dt.date,
 ) -> list[PlannedQuery]:
-    opt = cfg.optimization
+    opt = cfg.optimization.for_destination(dest)
 
     def state(origin: str, pair: tuple[dt.date, dt.date]) -> Optional[PairState]:
         return states.get((origin, pair[0], pair[1]))
@@ -223,6 +223,7 @@ def plan_night(
       mañana), es decir, las fechas que la mañana no miró;
     - top: los night_top_k pares más baratos del destino (último precio conocido), aunque la mañana ya los
       haya consultado: segunda revisión del día de las fechas que más chances tienen de alertar;
+    - empty: los pares que la última vez dieron sin resultados (todavía no no_service), para reintentarlos;
     - recheck: los pares no_service que ya cumplieron recheck_days.
     El modo reducido no aplica a la noche."""
     today = now.date()
@@ -242,7 +243,7 @@ def plan_night(
         )
         top: set[tuple[dt.date, dt.date]] = set()
         for _, d, r in priced:
-            if len(top) >= cfg.optimization.night_top_k:
+            if len(top) >= cfg.optimization.for_destination(dest).night_top_k:
                 break
             top.add((d, r))
         for d, r in pairs:
@@ -258,6 +259,8 @@ def plan_night(
                     reason = "sweep"
                 elif (d, r) in top:
                     reason = "top"
+                elif st.empty_streak > 0:
+                    reason = "empty"
                 else:
                     reason = None
                 if reason:

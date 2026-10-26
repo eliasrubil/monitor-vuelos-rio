@@ -49,7 +49,9 @@ def repo_raw_config() -> dict:
     para que editar fechas, destinos o cantidades en el config real no rompa los tests."""
     raw = yaml.safe_load((ROOT / "config.yaml").read_text())
     raw["search"].update(departure_from="2027-01-14", return_until="2027-02-05", destinations=["GIG", "GRU", "CFB"])
-    raw["optimization"].update(top_k=8, rotating_k=5, night_top_k=0)
+    raw["optimization"].update(top_k=8, rotating_k=5, night_top_k=0, destination_overrides={},
+                               retry_empty_wait_seconds=0, no_service_after_empty_runs=2, recheck_days=14)
+    raw["detection"].update(absolute_threshold_by_destination={}, antispam_memory_days=None)
     return raw
 
 
@@ -98,7 +100,7 @@ class FakeSource(PriceSource):
         if value == "fatal":
             return SearchOutcome(STATUS_ERROR, http_status=401, attempts=1, error="invalid key", fatal=True)
         if value is None:
-            return SearchOutcome(STATUS_NO_RESULTS, http_status=200, attempts=1, billable=True)
+            return SearchOutcome(STATUS_NO_RESULTS, http_status=200, attempts=1, billable=True, raw_count=0)
         ref = f"{query.origin}-{query.destination}-{query.depart}-{query.ret}"
         quote = Quote(price_total=value * self.adults, price_pp=value, currency="USD", stops=1,
                       airlines=tuple(self.airlines_fn(query)), source_ref=ref,

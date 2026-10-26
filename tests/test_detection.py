@@ -101,3 +101,10 @@ def test_rule_b_uses_window_median():
     prices = [100 + i for i in range(17)] + [2000, 2000, 2000, 95]
     ev = evaluate(95, [], window(prices), DetectionConfig(), NOW)
     assert ev.window_rank == 1 and ev.rules == []
+
+
+def test_rule_c_by_destination_is_strictly_below():
+    cfg = DetectionConfig(absolute_threshold_by_destination={"GIG": 350})
+    assert evaluate(349.9, [], [], cfg, NOW, "GIG").rules == ["C"]
+    assert evaluate(350, [], [], cfg, NOW, "GIG").rules == []
+    assert evaluate(200, [], [], cfg, NOW, "GRU").rules == []        # solo Río

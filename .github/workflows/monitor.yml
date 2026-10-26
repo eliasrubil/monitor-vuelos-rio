@@ -38,7 +38,7 @@ permissions:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 60     # la corrida de la noche barre ~90 consultas (~20 s cada una)
+    timeout-minutes: 90     # hasta ~110 consultas (~20 s cada una) más los reintentos de respuestas vacías
     steps:
       - uses: actions/checkout@v4
 

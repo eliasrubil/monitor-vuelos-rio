@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import statistics
+import time
 from collections import Counter
 from typing import Callable, Optional
 
@@ -61,6 +62,7 @@ class Runner:
         dry_run: bool = False,
         usage: Optional[Store] = None,
         clock: Callable[[], dt.datetime] = utcnow,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         """usage: base donde se registran las requests (contador mensual). Por defecto es store; en
         dry-run es la base real, porque la fuente cobra esas requests aunque no se guarden precios."""
@@ -71,6 +73,7 @@ class Runner:
         self.notifier = notifier
         self.dry_run = dry_run
         self.clock = clock
+        self.sleep = sleep
         self.notes: list[str] = []
 
     # ------------------------------------------------------------------ run
@@ -154,18 +157,21 @@ class Runner:
         executed = 0
         followup_outcomes: dict[tuple[str, str, dt.date, dt.date], SearchOutcome] = {}
         follow_keys = {(f.origin, f.destination, f.depart, f.ret) for f in followups}
+        retry_wait = cfg.optimization.retry_empty_wait_seconds
         for q in plan.queries:
-            outcome = self.source.search_round_trip(self._search_query(q))
+            outcome = self._query(q, usage_run_id)
+            if outcome.status == STATUS_NO_RESULTS and outcome.raw_count == 0 and retry_wait > 0:
+                # Respuesta vacía de la fuente: suele ser una búsqueda que no llegó a completarse. Un reintento.
+                log.info("%s→%s %s/%s: respuesta vacía, se reintenta en %.0f s", q.origin, q.destination, q.depart,
+                         q.ret, retry_wait)
+                self.sleep(retry_wait)
+                billable += int(outcome.billable)
+                outcome = self._query(q, usage_run_id)
             if (q.origin, q.destination, q.depart, q.ret) in follow_keys:
                 followup_outcomes[(q.origin, q.destination, q.depart, q.ret)] = outcome
             executed += 1
             statuses[outcome.status] += 1
             billable += int(outcome.billable)
-            self.usage.record_request(
-                usage_run_id, self.clock(), self.source.name, "fares", outcome.status, outcome.billable,
-                outcome.http_status, outcome.attempts, outcome.error, q.origin, q.destination, q.depart, q.ret,
-            )
-            self.usage.commit()   # si la corrida se corta, las requests facturadas quedan contadas
             self._apply_outcome(run_id, q, outcome, seqs[q.destination])
             if not self.dry_run:
                 self.store.commit()
@@ -233,6 +239,22 @@ class Runner:
             seqs[dp.destination] = st.run_seq
             self.store.save_dest_state(st)
         return seqs
+
+    def _query(self, q: PlannedQuery, usage_run_id: int) -> SearchOutcome:
+        """Una consulta a la fuente, registrada en el contador de uso (commit inmediato: si la corrida se corta,
+        las requests facturadas quedan contadas)."""
+        started = time.monotonic()
+        outcome = self.source.search_round_trip(self._search_query(q))
+        if outcome.status == STATUS_NO_RESULTS:
+            log.info("%s→%s %s/%s: sin resultados (%s itinerarios de la fuente antes de filtrar, %.1f s)", q.origin,
+                     q.destination, q.depart, q.ret, "?" if outcome.raw_count is None else outcome.raw_count,
+                     time.monotonic() - started)
+        self.usage.record_request(
+            usage_run_id, self.clock(), self.source.name, "fares", outcome.status, outcome.billable,
+            outcome.http_status, outcome.attempts, outcome.error, q.origin, q.destination, q.depart, q.ret,
+        )
+        self.usage.commit()
+        return outcome
 
     def _search_query(self, q: PlannedQuery) -> SearchQuery:
         s = self.cfg.search
@@ -331,10 +353,12 @@ class Runner:
             if c.destination not in windows:
                 windows[c.destination] = self.store.window(c.destination)
             history = self.store.itinerary_history(c.destination, c.depart, c.ret, exclude_run=run_id)
-            ev = evaluate(c.price_pp, history, windows[c.destination], det, now)
+            ev = evaluate(c.price_pp, history, windows[c.destination], det, now, c.destination)
             if not ev.triggered:
                 continue
-            last = self.store.last_alert_price(c.destination, c.depart, c.ret)
+            memory = det.antispam_memory_days
+            last = self.store.last_alert_price(c.destination, c.depart, c.ret,
+                                               since=now - dt.timedelta(days=memory) if memory else None)
             if not passes_antispam(c.price_pp, last, det.antispam_min_drop_pct):
                 log.info("%s %s/%s: regla %s, pero anti-spam (%.0f vs. última alerta %.0f)",
                          c.destination, c.depart, c.ret, "+".join(ev.rules), c.price_pp, last)

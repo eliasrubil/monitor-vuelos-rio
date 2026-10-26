@@ -25,6 +25,10 @@ class ConfigError(ValueError):
     pass
 
 
+# Parámetros de optimization que un destino puede tener propios (destination_overrides).
+OVERRIDABLE = {"top_k", "rotating_k", "night_top_k", "max_staleness_runs"}
+
+
 @dataclass
 class SearchConfig:
     origins: list[str]
@@ -70,6 +74,15 @@ class OptimizationConfig:
     reduced_interval_days: int = 7
     reduced_reference_destination: str = "GIG"
     gru_margin_usd: float = 80
+    # Si la fuente devuelve una respuesta vacía (cero itinerarios), se reintenta una vez tras N segundos (0 = no).
+    retry_empty_wait_seconds: float = 0
+    # Valores propios de un destino, p. ej. {GIG: {top_k: 60, night_top_k: 60}}.
+    destination_overrides: dict = field(default_factory=dict)
+
+    def for_destination(self, destination: str) -> "OptimizationConfig":
+        """La configuración efectiva de un destino (con sus valores propios, si tiene)."""
+        overrides = self.destination_overrides.get(destination) or {}
+        return dataclasses.replace(self, **overrides) if overrides else self
 
 
 @dataclass
@@ -92,7 +105,11 @@ class DetectionConfig:
     temporal: TemporalRuleConfig = field(default_factory=TemporalRuleConfig)
     cross: CrossRuleConfig = field(default_factory=CrossRuleConfig)
     absolute_threshold_usd_pp: Optional[float] = None
+    # Regla C por destino, p. ej. {GIG: 350}: alerta si el precio por persona es menor a ese valor.
+    absolute_threshold_by_destination: dict = field(default_factory=dict)
     antispam_min_drop_pct: float = 0.03
+    # El anti-spam solo recuerda alertas de los últimos N días (None = todas).
+    antispam_memory_days: Optional[int] = None
 
 
 @dataclass
@@ -214,6 +231,17 @@ def _validate(cfg: Config) -> Config:
     o.reduced_reference_destination = o.reduced_reference_destination.upper()
     if o.top_k < 0 or o.rotating_k < 0 or o.max_staleness_runs < 1:
         raise ConfigError("optimization: top_k/rotating_k >= 0 y max_staleness_runs >= 1")
+    o.destination_overrides = {str(k).upper(): v or {} for k, v in (o.destination_overrides or {}).items()}
+    for dest, values in o.destination_overrides.items():
+        unknown = set(values) - OVERRIDABLE
+        if unknown:
+            raise ConfigError(f"optimization.destination_overrides.{dest}: claves no permitidas {sorted(unknown)} "
+                              f"(se puede usar {sorted(OVERRIDABLE)})")
+        if any(int(v) < 0 for v in values.values()):
+            raise ConfigError(f"optimization.destination_overrides.{dest}: los valores deben ser >= 0")
+    d = cfg.detection
+    d.absolute_threshold_by_destination = {
+        str(k).upper(): float(v) for k, v in (d.absolute_threshold_by_destination or {}).items()}
     if cfg.detection.cross.max_rank < 1:
         raise ConfigError("detection.cross.max_rank debe ser >= 1")
     if cfg.budget.max_requests_per_month < 0 or cfg.budget.dry_run_max_queries < 0:

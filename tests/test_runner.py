@@ -561,3 +561,73 @@ def test_night_rechecks_the_cheapest_dates_too(raw_config, tmp_path, notifier, c
     assert cheapest <= gig                                                     # segunda revisión del día
     assert gig - cheapest == _all_gig_pairs(cfg) - _pairs(morning.calls)       # + lo que la mañana no miró
     assert {q.destination for q in night.calls} == {"GIG", "GRU"}
+
+
+def test_empty_response_is_retried_once(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, search={"destinations": ["GIG"]},
+                      optimization={"retry_empty_wait_seconds": 20})
+    flaky = {(dt.date(2027, 1, 14), dt.date(2027, 1, 23))}
+    seen: dict = {}
+    base = constant_prices()
+
+    def prices(q):
+        key = (q.depart, q.ret)
+        seen[key] = seen.get(key, 0) + 1
+        return None if key in flaky and seen[key] == 1 else base(q)     # vacía la primera vez
+
+    waits = []
+    store = Store.open(cfg.database.path)
+    src = FakeSource(prices)
+    Runner(cfg, store, src, notifier, clock=clock, sleep=waits.append).run()
+    store.close()
+    assert waits == [20] and len(src.calls) == 39 + 1
+    conn = db(cfg)
+    assert conn.execute("SELECT COUNT(*) FROM requests WHERE billable = 1").fetchone()[0] == 40
+    assert conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 39      # el reintento trajo precio
+
+
+def test_destination_overrides_give_rio_every_date_twice(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, search={"destinations": ["GIG", "GRU"]},
+                      optimization={"top_k": 12, "rotating_k": 10, "night_top_k": 12, "destination_overrides": {
+                          "GIG": {"top_k": 60, "rotating_k": 60, "night_top_k": 60}, "GRU": {"night_top_k": 0}}})
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)
+    clock.advance()
+    morning = FakeSource(constant_prices())
+    _run_slot(cfg, morning, notifier, clock, "morning")
+    assert len(_pairs(morning.calls, "GIG")) == 39 and len(_pairs(morning.calls, "GRU")) == 22
+    clock.now += dt.timedelta(hours=12)
+    night = FakeSource(constant_prices())
+    _run_slot(cfg, night, notifier, clock, "night")
+    assert len(_pairs(night.calls, "GIG")) == 39                       # todas, otra vez
+    assert _pairs(night.calls, "GRU") == _all_gig_pairs(cfg) - _pairs(morning.calls, "GRU")   # solo lo no visto
+
+
+def test_rio_absolute_threshold_and_antispam_memory(big_cfg, notifier, channels, clock):
+    cfg = big_cfg
+    cfg.detection.absolute_threshold_by_destination = {"GIG": 350.0}
+    cfg.detection.antispam_memory_days = 7
+    pair = (dt.date(2027, 1, 30 - 10), dt.date(2027, 1, 30))
+    prices = drop_for(pair, 345)            # 345 < 350: regla C aunque no esté 15% abajo de nada
+    run_once(cfg, FakeSource(prices), notifier, clock, full_scan=True)
+    assert "C" in db(cfg).execute("SELECT rules FROM alerts").fetchone()[0].split(",")
+    clock.advance()
+    channels["email"].sent.clear()
+    run_once(cfg, FakeSource(prices), notifier, clock, full_scan=True)
+    assert channels["email"].sent == []     # mismo precio al día siguiente: anti-spam
+    clock.advance(7)
+    run_once(cfg, FakeSource(prices), notifier, clock, full_scan=True)
+    assert len(channels["email"].sent) == 1  # pasaron 7 días: la alerta vieja se olvida
+
+
+def test_night_retries_dates_that_were_empty(raw_config, tmp_path, notifier, clock):
+    cfg = make_config(raw_config, database={"path": str(tmp_path / "p.db")}, search={"destinations": ["GIG"]},
+                      optimization={"no_service_after_empty_runs": 4})
+    run_once(cfg, FakeSource(constant_prices()), notifier, clock)
+    clock.advance()
+    gone = (dt.date(2027, 1, 14), dt.date(2027, 1, 23))               # el más barato: va en el top de la mañana
+    base = constant_prices()
+    _run_slot(cfg, FakeSource(lambda q: None if (q.depart, q.ret) == gone else base(q)), notifier, clock, "morning")
+    clock.now += dt.timedelta(hours=12)
+    night = FakeSource(constant_prices())
+    _run_slot(cfg, night, notifier, clock, "night")
+    assert gone in _pairs(night.calls)                                 # vacío a la mañana: se reintenta a la noche

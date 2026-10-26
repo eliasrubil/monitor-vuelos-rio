@@ -5,8 +5,8 @@ tiempo de ejecución). Corre dos veces por día en GitHub Actions (08:00 y 20:00
 (`data/prices.db`, commiteada por el workflow) y avisa por **Telegram** y **email** cuando detecta precios
 bajos.
 
-- Búsqueda: ida y vuelta al mismo destino, ida ≥ 2027-01-13, vuelta ≤ 2027-02-06, duración 9/10/11 días
-  (45 pares de fechas por destino), 5 adultos, máximo 1 escala, precios en USD con impuestos.
+- Búsqueda: ida y vuelta al mismo destino, ida ≥ 2027-01-10, vuelta ≤ 2027-02-06, duración 9/10/11 días
+  (54 pares de fechas por destino), 5 adultos, máximo 1 escala, precios en USD con impuestos.
 - Fuente de datos: [Ignav](https://ignav.com/docs) (`POST /api/fares/round-trip`), detrás de una interfaz
   `PriceSource` intercambiable.
 - Todo se configura en [`config.yaml`](config.yaml).
@@ -53,10 +53,10 @@ y vuelta usan aeropuertos distintos). Los destinos son **GIG** y **GRU**: para R
 | Situación | Qué se consulta |
 |---|---|
 | Primera corrida, o `--full-scan` | Barrido completo: 45 pares por destino |
-| Corrida de la mañana (08:00) | `top_k` (12) pares más baratos + `rotating_k` (10) del resto, el dato más viejo primero |
+| Corrida de la mañana (08:00) | `top_k` (12) pares más baratos + `rotating_k` (10) del resto, el dato más viejo primero. **Río (GIG): todas sus fechas** (`destination_overrides`) |
 | Corrida de la noche (20:00) | Los hallazgos de la mañana (seguimiento) + **todos** los pares con servicio que la mañana no consultó + una segunda revisión de los `night_top_k` (12) más baratos. Así cada fecha se revisa todos los días y las más baratas, dos veces |
 | Garantía de frescura | Si un par llegaría a `max_staleness_runs` (6) corridas sin actualizar, se agrega igual |
-| `no_service` | Una consulta que dio "sin resultados" 2 corridas seguidas se marca `no_service` y se reconsulta cada `recheck_days` (14) |
+| `no_service` | Una consulta que dio "sin resultados" 4 corridas seguidas se marca `no_service` y se reconsulta cada `recheck_days` (2). Si la fuente devuelve una respuesta vacía, se reintenta una vez a los 20 s (`retry_empty_wait_seconds`), y a la noche se reintentan las fechas que a la mañana dieron vacío |
 | Modo reducido (desactivado) | Hoy los tres destinos, GRU incluido, se consultan todos los días (`reduced_destinations: []`). Si se agrega un destino a esa lista, se consulta cada `reduced_interval_days` y pasa a diario cuando su mediana ≤ mediana de GIG − `gru_margin_usd` |
 
 Ignav no ofrece búsqueda por calendario ni fechas flexibles (cada consulta es un par de fechas), así que la
@@ -70,11 +70,12 @@ optimización se hace eligiendo qué pares consultar.
   porque un precio atípico (p. ej. una tarifa de USD 1.310 en una fecha que suele costar 440) no la mueve.
 - **Regla B (transversal):** el itinerario contra el último precio conocido de todos los pares del mismo
   destino (mínimo 10 pares). Alerta si está entre las **3 fechas más baratas** del destino (`max_rank`) **y** ≥ 15% debajo de la mediana.
-- **Regla C (absoluta):** `absolute_threshold_usd_pp`, desactivada mientras sea `null`.
+- **Regla C (absoluta):** alerta si el precio por persona es **menor** al umbral del destino
+  (`absolute_threshold_by_destination`, hoy **GIG: USD 350**) o al global `absolute_threshold_usd_pp` (`null`).
 - Si se disparan varias reglas, se manda **una sola alerta**. La regla no se muestra en el mensaje, pero
   queda guardada en la tabla `alerts` y en el log de la corrida.
 - **Anti-spam:** un itinerario ya alertado solo se vuelve a alertar si su precio baja ≥ 3% respecto de la
-  última alerta.
+  última alerta de los últimos 7 días (`antispam_memory_days`); pasada una semana, puede volver a alertar.
 
 **Alertas.** Telegram recibe **un solo mensaje por corrida** con todas las alertas en formato corto,
 numeradas I), II), ... (si supera el límite de caracteres de Telegram se parte en varios mensajes, sin cortar
@@ -230,7 +231,7 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   requests en la base, y la commitea.
 - **demo_alert:** manda alertas simuladas (un email y un mensaje de Telegram) para ver cómo se ven, sin
   consultar la API ni tocar la base.
-- **full_scan:** barrido completo de todas las combinaciones (90 requests).
+- **full_scan:** barrido completo de todas las combinaciones (108 requests).
 - **slot:** `auto` (por la hora), `morning` o `night`, para forzar qué corrida es.
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
@@ -299,7 +300,7 @@ base, detección, alertas) no cambia.
 ## Presupuesto de requests y costo
 
 Al iniciar, cada corrida loguea los requests estimados y el acumulado del mes. Si la corrida haría superar
-`max_requests_per_month` (4500), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
+`max_requests_per_month` (7000), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
 cuántas consultas se hicieron, cuántas se ahorraron frente a un barrido completo y el acumulado del mes. El
 contador mensual cuenta solo las respuestas 200, que son las que Ignav factura, incluidas las de los
 dry runs.
@@ -308,14 +309,15 @@ Con la configuración actual:
 
 | Corrida | Requests |
 |---|---|
-| Barrido completo (45 pares × 2 destinos, origen BUE) | 90 |
-| Mañana (GIG + GRU: 22 pares c/u, más fechas que vencen por antigüedad) | ~45–50 |
-| Noche (seguimiento de la mañana + fechas que la mañana no consultó + 12 más baratas de cada destino) | ~65–75 |
+| Barrido completo (54 pares × 2 destinos, origen BUE) | 108 |
+| Mañana (GIG: todas sus fechas; GRU: 22 pares) | ~75–80 |
+| Noche (GIG: todas otra vez; GRU: las que la mañana no consultó; seguimiento) | ~85 |
+| Reintentos de respuestas vacías | ~10–20 |
 | Links de reserva | 1 por alerta |
 | Dry run manual | hasta 4 |
-| **Mes típico** | **~3.800** |
+| **Mes típico** | **~5.500** |
 
-Costo: ~USD 7,6 por mes (USD 2 cada 1.000 requests).
+Costo: ~USD 11 por mes (USD 2 cada 1.000 requests).
 
 ---
 
