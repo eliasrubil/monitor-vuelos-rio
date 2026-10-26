@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS migrations (
 # para que el tope mensual siga contando lo ya consumido. La base anterior queda en el historial de git.
 RESET_MIGRATION = "2026-10-08_reset_bue"
 RESET_TABLES = ("observations", "pair_state", "dest_state", "alerts")
+REACTIVATE_MIGRATION = "2026-10-26_reactivate_no_service"
 NEW_COLUMNS = {
     "observations": {"depart_airport": "TEXT", "return_airport": "TEXT"},
     "runs": {"slot": "TEXT"},
@@ -189,6 +190,7 @@ class Store:
             for col, ctype in cols.items():
                 if col not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ctype}")
+        self._reactivate_no_service()
         if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (RESET_MIGRATION,)).fetchone():
             return
         counts = {t: self.conn.execute(f"DELETE FROM {t}").rowcount for t in RESET_TABLES}
@@ -198,6 +200,20 @@ class Store:
         self.conn.commit()
         if any(counts.values()):
             log.warning("Base reiniciada (%s): %s borrados; runs y requests se conservan", RESET_MIGRATION, detail)
+
+    def _reactivate_no_service(self) -> None:
+        """Desde el 24/10/2026 Ignav devolvió respuestas vacías para muchas fechas de GIG y quedaron marcadas
+        no_service (sin consultarse por 14 días). Se reactivan todas una vez; el criterio nuevo es más tolerante."""
+        if self.conn.execute("SELECT 1 FROM migrations WHERE name = ?", (REACTIVATE_MIGRATION,)).fetchone():
+            return
+        n = self.conn.execute(
+            "UPDATE pair_state SET no_service = 0, empty_streak = 0, no_service_since = NULL WHERE no_service = 1"
+        ).rowcount
+        self.conn.execute("INSERT INTO migrations (name, applied_at, detail) VALUES (?, ?, ?)",
+                          (REACTIVATE_MIGRATION, iso(dt.datetime.now(dt.timezone.utc)), f"pair_state={n}"))
+        self.conn.commit()
+        if n:
+            log.warning("Se reactivaron %d consultas marcadas sin servicio (%s)", n, REACTIVATE_MIGRATION)
 
     # ----------------------------------------------------------- apertura
     @classmethod
@@ -408,11 +424,13 @@ class Store:
         )
 
     # -------------------------------------------------------------- alerts
-    def last_alert_price(self, destination: str, depart: dt.date, ret: dt.date) -> Optional[float]:
+    def last_alert_price(self, destination: str, depart: dt.date, ret: dt.date,
+                         since: Optional[dt.datetime] = None) -> Optional[float]:
+        """Precio de la última alerta del itinerario (solo las enviadas desde `since`, si se indica)."""
         r = self.conn.execute(
             """SELECT price_pp FROM alerts WHERE destination = ? AND depart_date = ? AND return_date = ?
-               ORDER BY id DESC LIMIT 1""",
-            (destination, depart.isoformat(), ret.isoformat()),
+               AND ts_utc >= ? ORDER BY id DESC LIMIT 1""",
+            (destination, depart.isoformat(), ret.isoformat(), iso(since) if since else ""),
         ).fetchone()
         return float(r[0]) if r else None
 

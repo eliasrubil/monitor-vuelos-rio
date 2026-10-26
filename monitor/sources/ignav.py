@@ -135,8 +135,10 @@ class IgnavSource(PriceSource):
                     self._currency_warned.add(c.currency)
                 continue
             valid.append(c)
+        raw = len(data.get("itineraries") or [])
         if not valid:
-            return SearchOutcome(STATUS_NO_RESULTS, http_status=status, attempts=attempts, billable=True)
+            return SearchOutcome(STATUS_NO_RESULTS, http_status=status, attempts=attempts, billable=True,
+                                 raw_count=raw)
         best = min(valid, key=lambda c: c.amount)
         if self._cfg.price_is_total:
             total, pp = best.amount, best.amount / query.adults
@@ -153,7 +155,8 @@ class IgnavSource(PriceSource):
             depart_airport=best.depart_airport,
             return_airport=best.return_airport,
         )
-        return SearchOutcome(STATUS_OK, quote=quote, http_status=status, attempts=attempts, billable=True)
+        return SearchOutcome(STATUS_OK, quote=quote, http_status=status, attempts=attempts, billable=True,
+                             raw_count=raw)
 
     @staticmethod
     def _parse_itinerary(it: dict) -> Optional[Itinerary]:

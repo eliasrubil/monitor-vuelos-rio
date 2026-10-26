@@ -17,7 +17,15 @@ def test_repo_config_loads():
     assert cfg.search.destinations == ["GIG", "GRU"]          # CFB dado de baja
     assert (cfg.optimization.top_k, cfg.optimization.rotating_k, cfg.optimization.night_top_k) == (12, 10, 12)
     assert cfg.search.open_jaw is False
-    assert cfg.budget.max_requests_per_month == 4500
+    assert cfg.budget.max_requests_per_month == 7000
+    assert cfg.search.departure_from == dt.date(2027, 1, 10)
+    gig, gru = cfg.optimization.for_destination("GIG"), cfg.optimization.for_destination("GRU")
+    assert (gig.top_k, gig.rotating_k, gig.night_top_k) == (60, 60, 60)
+    assert (gru.top_k, gru.rotating_k, gru.night_top_k) == (12, 10, 0)
+    assert (cfg.optimization.no_service_after_empty_runs, cfg.optimization.recheck_days) == (4, 2)
+    assert cfg.optimization.retry_empty_wait_seconds == 20
+    assert cfg.detection.absolute_threshold_by_destination == {"GIG": 350.0}
+    assert cfg.detection.antispam_memory_days == 7
     assert cfg.budget.dry_run_max_queries == 4
     assert cfg.ignav.price_is_total is True
     assert cfg.detection.absolute_threshold_usd_pp is None
@@ -53,4 +61,10 @@ def test_secrets_from_env():
 def test_excluded_airport_cannot_be_a_destination(raw_config):
     raw_config["search"]["destinations"] = ["GIG", "SDU"]
     with pytest.raises(ConfigError, match="airports_exclude"):
+        make_config(raw_config)
+
+
+def test_unknown_destination_override_is_rejected(raw_config):
+    raw_config["optimization"]["destination_overrides"] = {"GIG": {"topk": 3}}
+    with pytest.raises(ConfigError, match="topk"):
         make_config(raw_config)
