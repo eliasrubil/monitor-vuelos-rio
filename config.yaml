@@ -15,7 +15,7 @@ search:
   # Ida y vuelta siempre al mismo destino. open_jaw: true habilitaría combinaciones
   # tipo ida GIG / vuelta GRU, pero requiere un adaptador que lo soporte (Ignav todavía no).
   open_jaw: false
-  departure_from: 2027-01-10   # fecha de ida >= esta
+  departure_from: 2027-01-02   # fecha de ida >= esta
   return_until: 2027-02-06     # fecha de vuelta <= esta
   durations: [9, 10, 11]       # días entre ida y vuelta
   adults: 5
@@ -42,9 +42,9 @@ ignav:
   allow_self_transfer: true    # default de la API
 
 budget:
-  # GIG (todas sus fechas mañana y noche) + GRU, desde el 10/01: ~180 consultas por día (con reintentos y
-  # links de reserva) ≈ 5.500 por mes.
-  max_requests_per_month: 7000 # si la corrida lo superaría, se saltea y se avisa
+  # GIG (todas sus fechas mañana y noche) + GRU, desde el 02/01 (78 pares por destino): ~220 consultas por
+  # día (con reintentos y links de reserva) ≈ 6.500 por mes.
+  max_requests_per_month: 9000 # si la corrida lo superaría, se saltea y se avisa
   dry_run_max_queries: 4       # tope de consultas de un dry-run (se cobran y se suman al contador)
 
 optimization:
