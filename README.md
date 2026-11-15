@@ -5,8 +5,8 @@ tiempo de ejecución). Corre dos veces por día en GitHub Actions (08:00 y 20:00
 (`data/prices.db`, commiteada por el workflow) y avisa por **Telegram** y **email** cuando detecta precios
 bajos.
 
-- Búsqueda: ida y vuelta al mismo destino, ida ≥ 2027-01-10, vuelta ≤ 2027-02-06, duración 9/10/11 días
-  (54 pares de fechas por destino), 5 adultos, máximo 1 escala, precios en USD con impuestos.
+- Búsqueda: ida y vuelta al mismo destino, ida ≥ 2027-01-02, vuelta ≤ 2027-02-06, duración 9/10/11 días
+  (78 pares de fechas por destino), 5 adultos, máximo 1 escala, precios en USD con impuestos.
 - Fuente de datos: [Ignav](https://ignav.com/docs) (`POST /api/fares/round-trip`), detrás de una interfaz
   `PriceSource` intercambiable.
 - Todo se configura en [`config.yaml`](config.yaml).
@@ -231,7 +231,7 @@ En **Actions → Monitor de vuelos → Run workflow** hay tres opciones:
   requests en la base, y la commitea.
 - **demo_alert:** manda alertas simuladas (un email y un mensaje de Telegram) para ver cómo se ven, sin
   consultar la API ni tocar la base.
-- **full_scan:** barrido completo de todas las combinaciones (108 requests).
+- **full_scan:** barrido completo de todas las combinaciones (156 requests).
 - **slot:** `auto` (por la hora), `morning` o `night`, para forzar qué corrida es.
 
 La primera corrida normal ya hace el barrido completo sola (línea base). La regla A empieza a funcionar
@@ -300,7 +300,7 @@ base, detección, alertas) no cambia.
 ## Presupuesto de requests y costo
 
 Al iniciar, cada corrida loguea los requests estimados y el acumulado del mes. Si la corrida haría superar
-`max_requests_per_month` (7000), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
+`max_requests_per_month` (9000), **se saltea entera** y se avisa por Telegram y email. Al final se loguea
 cuántas consultas se hicieron, cuántas se ahorraron frente a un barrido completo y el acumulado del mes. El
 contador mensual cuenta solo las respuestas 200, que son las que Ignav factura, incluidas las de los
 dry runs.
@@ -309,15 +309,15 @@ Con la configuración actual:
 
 | Corrida | Requests |
 |---|---|
-| Barrido completo (54 pares × 2 destinos, origen BUE) | 108 |
+| Barrido completo (78 pares × 2 destinos, origen BUE) | 156 |
 | Mañana (GIG: todas sus fechas; GRU: 22 pares) | ~75–80 |
 | Noche (GIG: todas otra vez; GRU: las que la mañana no consultó; seguimiento) | ~85 |
 | Reintentos de respuestas vacías | ~10–20 |
 | Links de reserva | 1 por alerta |
 | Dry run manual | hasta 4 |
-| **Mes típico** | **~5.500** |
+| **Mes típico** | **~6.500** |
 
-Costo: ~USD 11 por mes (USD 2 cada 1.000 requests).
+Costo: ~USD 13 por mes (USD 2 cada 1.000 requests).
 
 ---
 
