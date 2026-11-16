@@ -1,9 +1,10 @@
 name: Monitor de vuelos
 
 on:
-  schedule:
-    - cron: "0 11 * * *"   # 11:00 UTC = 08:00 Argentina: corrida de la mañana (Morning Sunshine!)
-    - cron: "0 23 * * *"   # 23:00 UTC = 20:00 Argentina: corrida de la noche (Night Owl!)
+  # PAUSADO (16/11/2026): sin corridas automáticas. Para reactivar, descomentar estas tres líneas.
+  # schedule:
+  #   - cron: "0 11 * * *"   # 11:00 UTC = 08:00 Argentina: corrida de la mañana (Morning Sunshine!)
+  #   - cron: "0 23 * * *"   # 23:00 UTC = 20:00 Argentina: corrida de la noche (Night Owl!)
   workflow_dispatch:
     inputs:
       slot:
